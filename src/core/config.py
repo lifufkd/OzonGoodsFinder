@@ -73,8 +73,10 @@ class RedisSettings(BaseSettings):
 
 
 class GenericSettings(BaseSettings):
+    PROXIES_FILE_PATH: str | None = None
 
     model_config = SettingsConfigDict(
+        env_file=".env",
         extra="allow"
     )
 

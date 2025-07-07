@@ -1,5 +1,8 @@
 import pytz
+import re
 from datetime import datetime, time
+from itertools import islice
+from urllib.parse import urlparse, urlunparse
 
 from src.core.redis_client import redis_client
 
@@ -20,3 +23,36 @@ def build_tasks_cron_expression(time_hh_mm: str, local_tz) -> str:
     dt = local.localize(datetime.combine(datetime.today(), time(hour=hours, minute=minutes)))
     dt_utc = dt.astimezone(pytz.utc)
     return f"{dt_utc.minute} {dt_utc.hour} * * *"
+
+
+async def chunk_generator(iterable, n):
+    itterator = iter(iterable)
+    while chunk := list(islice(itterator, n)):
+        yield chunk
+
+
+def format_proxy(proxy_url: str) -> dict | None:
+    pattern = re.compile(
+        r'^(?P<scheme>https?|socks5?|socks4)://(?:((?P<username>[^:]+):(?P<password>[^@]+)@)?)?(?P<ip>[^:]+):('
+        r'?P<port>\d+)$'
+    )
+
+    match = pattern.match(proxy_url)
+    if not match:
+        return None
+
+    result = {
+        "server": f"{match.group('ip')}:{match.group('port')}",
+    }
+
+    if match.group("username") and match.group("password"):
+        result["username"] = match.group("username")
+        result["password"] = match.group("password")
+
+    return result
+
+
+def clean_url(url: str) -> str:
+    parsed = urlparse(url)
+    cleaned = parsed._replace(query="")
+    return str(urlunparse(cleaned))
