@@ -2,7 +2,7 @@ import pytz
 import re
 from datetime import datetime, time
 from itertools import islice
-from urllib.parse import urlparse, urlunparse
+from loguru import logger
 
 from src.core.redis_client import redis_client
 
@@ -52,7 +52,8 @@ def format_proxy(proxy_url: str) -> dict | None:
     return result
 
 
-def clean_url(url: str) -> str:
-    parsed = urlparse(url)
-    cleaned = parsed._replace(query="")
-    return str(urlunparse(cleaned))
+def extract_number(text: str) -> int | None:
+    try:
+        return int(re.sub(r"\D", "", text))
+    except Exception as e:
+        logger.warning(f"Cannot extract number: {e}")

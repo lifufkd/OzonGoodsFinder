@@ -4,12 +4,13 @@ from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
 from src.schemas.categories import Catalog, CatalogWithProducts, CatalogWithFullProducts
-from src.schemas.products import Product
+from src.schemas.products import Product, FullProduct
 from src.core.config import generic_settings
 from src.parsers.ozon import OzonParser
 from src.core.utils import chunk_generator
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
+from src.core.logger import setup_logger
 
 
 class OzonParserService:
@@ -47,6 +48,31 @@ class OzonParserService:
             **catalog.model_dump()
         )
 
+    async def get_products(self, catalog: CatalogWithProducts, timeout: int) -> CatalogWithFullProducts:
+        result = []
+        ozon_parser = OzonParser(self.browser)
+
+        for product in catalog.ozon_products:
+            raw_product = await ozon_parser.allocate_browser(ozon_parser.parse_product, product.ozon_url, timeout)
+            logger.info(raw_product)
+            try:
+                result.append(
+                    FullProduct(
+                        ozon_url=product.ozon_url,
+                        **raw_product
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Error converting product: {e}")
+
+        catalog_with_full_products = CatalogWithFullProducts(
+            tg_group_id=catalog.tg_group_id,
+            tg_topic_id=catalog.tg_topic_id,
+            ozon_url=catalog.ozon_url,
+            ozon_products=result
+        )
+        return catalog_with_full_products
+
     async def get_new_products(self) -> list[CatalogWithFullProducts]:
         settings = generic_settings.BROWSER_SETTINGS
         catalogs = self.get_catalogs()
@@ -64,16 +90,18 @@ class OzonParserService:
 
                 for catalog in catalogs_with_products:
                     if not catalog:
-                        continue
+                        await self.get_products(catalog, settings.get("MAX_CONCURRENT_TABS"))
             logger.info(f"Finished parsing {len(catalogs)} catalogs!")
 
 
 async def update_products():
+    setup_logger()
     logger.info("Starting update products")
 
     proxy_manager = ProxyManager(redis_client)
     await proxy_manager.init_proxies()
     ozon_parser = OzonParserService()
+
     new_products = await ozon_parser.get_new_products()
 
 

@@ -1,12 +1,13 @@
 import re
 import asyncio
+import json
+from bs4 import BeautifulSoup
 from loguru import logger
 
 from src.core.config import generic_settings
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
-from src.core.utils import format_proxy, clean_url
-from src.core.exception_handlers import monitor_network_errors
+from src.core.utils import format_proxy, extract_number
 
 
 class OzonParser:
@@ -24,18 +25,214 @@ class OzonParser:
 
         context = await self.browser_session.new_context(proxy=proxy)
         browser_tab = await context.new_page()
-        await monitor_network_errors(browser_tab)
+        # await monitor_network_errors(browser_tab)
 
         return await func(*args, browser_tab=browser_tab, **kwargs)
 
     def _extract_discount(self, raw_discount: str) -> int | None:
-        match = re.search(r"−?(\d+)%", raw_discount)
-
+        match = re.search(r"[−-](\d+)%", raw_discount)
         try:
             if match:
                 return int(match.group(1))
-        except ValueError:
-            return None
+        except Exception as e:
+            logger.debug(f"Cannot extract discount: {e}")
+
+    def _find_hashtag(self, soup: BeautifulSoup) -> str | None:
+        hashtag = None
+        try:
+            div = soup.find("div", id=re.compile(r"^state-breadCrumbs-"))
+            if not div:
+                logger.warning(f"Cannot find div with id = state-breadCrumbs")
+                return hashtag
+            data_state = div.get("data-state")
+            if not data_state:
+                logger.warning(f"Cannot find attribute data-state for div with id = state-breadCrumbs")
+                return hashtag
+
+            data = json.loads(data_state)
+            breadcrumbs = data.get("breadcrumbs")
+            hashtag = breadcrumbs[-1]["text"]
+        except Exception as e:
+            logger.warning(f"Cannot find hashtag: {e}")
+        finally:
+            return hashtag
+
+    def _find_title(self, soup: BeautifulSoup) -> str | None:
+        title = None
+        try:
+            div = soup.find("div", id=re.compile(r"^state-webStickyProducts-"))
+            if not div:
+                logger.warning(f"Cannot find div with id = state-webStickyProducts")
+                return title
+            data_state = div.get("data-state")
+            if not data_state:
+                logger.warning(f"Cannot find attribute data-state for div with id = state-webStickyProducts")
+                return title
+
+            data = json.loads(data_state)
+            title = data["name"]
+        except Exception as e:
+            logger.warning(f"Cannot find title: {e}")
+        finally:
+            return title
+
+    def _find_discount(self, soup: BeautifulSoup) -> int | None:
+        discounts = []
+        try:
+            blocks = soup.find_all(attrs={"data-widget": "webMarketingLabels"})
+            for block in blocks:
+                text = block.get_text()
+                discount = self._extract_discount(text)
+                if discount:
+                    discounts.append(discount)
+
+            if discounts:
+                return max(discounts)
+            else:
+                logger.warning(f"Cannot find discount, because all tags are empty")
+        except Exception as e:
+            logger.warning(f"Cannot find discount: {e}")
+
+    def _find_rating_and_review(self, soup: BeautifulSoup) -> tuple | None:
+        rating, reviews = None, None
+        try:
+            for script in soup.find_all("script"):
+                if script.string and '"aggregateRating"' in script.string:
+                    try:
+                        data = json.loads(script.string.strip())
+                        rating = float(data.get("aggregateRating", {}).get("ratingValue"))
+                        reviews = int(data.get("aggregateRating", {}).get("reviewCount"))
+                        break
+                    except Exception as e:
+                        logger.debug(f"Cannot find rating or review: {e}")
+                        continue
+        except Exception as e:
+            logger.debug(f"Cannot find rating and review: {e}")
+        finally:
+            return rating, reviews
+
+    def _find_price(self, soup: BeautifulSoup) -> int | None:
+        price = None
+        try:
+            div = soup.find("div", id=re.compile(r"^state-webPrice-"))
+            if not div:
+                logger.warning(f"Cannot find div with id = state-webPrice")
+                return price
+            data_state = div.get("data-state")
+            if not data_state:
+                logger.warning(f"Cannot find attribute data-state for div with id = state-webPrice")
+                return price
+
+            data = json.loads(data_state)
+            extracted_price = extract_number(data.get("cardPrice"))
+            if extracted_price:
+                price = extracted_price
+            else:
+                logger.warning(f"Cannot extract price")
+        except Exception as e:
+            logger.warning(f"Cannot find prices: {e}")
+        finally:
+            return price
+
+    def _find_unit_of_measure(self, soup: BeautifulSoup) -> tuple:
+        unit_of_measure, unit_variants = None, []
+        try:
+            div = soup.find("div", id=re.compile(r"^state-webAspects-"))
+            if not div:
+                logger.debug(f"Cannot find div with id = state-webAspects")
+                return None, unit_variants
+            data_state = div.get("data-state")
+            if not data_state:
+                logger.debug(f"Cannot find attribute data-state for div with id = state-webAspects")
+                return None, unit_variants
+
+            data = json.loads(data_state)
+            aspects = data.get("aspects")
+            for aspect in aspects:
+                for product_type in generic_settings.OZON_PARSER_SETTINGS.get("PRODUCT_UNIT_OF_MEASURES"):
+                    if product_type not in aspect.get("aspectKey"):
+                        continue
+
+                    unit_of_measure = aspect.get("aspectName")
+                    for variant in aspect.get("variants"):
+                        if generic_settings.ALLOW_ONLY_IN_STOCK_MEASURE and variant.get("availability") != "inStock":
+                            logger.debug(f"Unit variant skipped because its out of stock")
+                            continue
+
+                        try:
+                            unit_variants.append(float(variant.get("data").get("searchableText")))
+                        except Exception as e:
+                            logger.debug(f"Error converting unit variant to float: {e}")
+
+                    return unit_of_measure, unit_variants
+        except Exception as e:
+            logger.debug(f"Cannot find prices: {e}")
+        finally:
+            return unit_of_measure, unit_variants
+
+    def _find_characteristics(self, soup: BeautifulSoup, filter: list) -> dict:
+        result = {}
+        try:
+            div = soup.find("div", id=re.compile(r"^state-webShortCharacteristics-"))
+            if not div:
+                logger.debug(f"Cannot find div with id = state-webShortCharacteristics")
+                return result
+            data_state = div.get("data-state")
+            if not data_state:
+                logger.debug(f"Cannot find attribute data-state for div with id = state-webShortCharacteristics")
+                return result
+
+            data = json.loads(data_state)
+            for char in data.get("characteristics"):
+                try:
+                    name = char.get("title").get("textRs")[0].get("content")
+                    value = ""
+                    for part_value in char.get("values"):
+                        value += part_value.get("text", "")
+
+                    if not name or not value:
+                        continue
+                    if name in filter:
+                        continue
+
+                    result[name] = value
+                except Exception as e:
+                    logger.debug(f"Cannot find name or value for characteristic: {e}")
+        except Exception as e:
+            logger.debug(f"Cannot find characteristics: {e}")
+        finally:
+            return result
+
+    def _find_photos(self, soup: BeautifulSoup) -> list[str] | list:
+        image_urls = list()
+        try:
+            gallery_div = soup.find("div", attrs={"data-widget": "webGallery"})
+            if gallery_div:
+                for img in gallery_div.find_all("img", src=True):
+                    src = img["src"]
+                    if "wc50" not in src:
+                        logger.debug(f"Cannot approve image, because parameter 'wc50' is missing in {src}")
+                        continue
+                    image_urls.append(src.replace("wc50", "wc1000"))
+            else:
+                logger.warning(f"Cannot find webGallery attribute")
+        except Exception as e:
+            logger.warning(f"Cannot find images: {e}")
+        finally:
+            return image_urls
+
+    def _find_video(self, soup: BeautifulSoup) -> str | None:
+        video_url = None
+        try:
+            tag = soup.find("video-player")
+            if tag:
+                video_url = tag["src"]
+            else:
+                logger.debug(f"Cannot find video-player tag")
+        except Exception as e:
+            logger.debug(f"Cannot find video: {e}")
+        finally:
+            return video_url
 
     async def parse_products_urls(self, catalog_url, timeout: int = 3, browser_tab=None) -> list[str]:
         links = []
@@ -65,7 +262,44 @@ class OzonParser:
                              f"satisfied min discount!!!, skip")
                 continue
 
-            result_link = clean_url("https://www.ozon.ru" + link)
+            result_link = "https://www.ozon.ru" + link
             links.append(result_link)
 
         return links
+
+    async def parse_product(self, product_url: str, timeout: int = 3, browser_tab=None) -> dict | None:
+        try:
+            await browser_tab.goto(product_url)
+            await asyncio.sleep(timeout)
+
+            content = await browser_tab.content()
+            soup = BeautifulSoup(content, "html.parser")
+
+            hashtag = self._find_hashtag(soup)
+            title = self._find_title(soup)
+            rating, reviews = self._find_rating_and_review(soup)
+            discount = self._find_discount(soup)
+            price = self._find_price(soup)
+            unit_of_measure, unit_variants = self._find_unit_of_measure(soup)
+            characteristics = self._find_characteristics(soup, filter=[unit_of_measure])
+            video_src = self._find_video(soup)
+            photos = []
+            if not video_src:
+                photos = list(dict.fromkeys(self._find_photos(soup)))[:2]   # Limit only 2 photo
+
+            return {
+                "title": title,
+                "hashtag": hashtag,
+                "rating": rating,
+                "reviews": reviews,
+                "discount": discount,
+                "price": price,
+                "unit_of_measure": unit_of_measure,
+                "unit_variants": unit_variants if unit_variants else None,
+                "characteristics": characteristics if characteristics else None,
+                "photos": photos if photos else None,
+                "video": video_src
+            }
+        except Exception as e:
+            logger.warning(f"Error parse product: {e}")
+
