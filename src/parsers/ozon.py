@@ -7,7 +7,7 @@ from loguru import logger
 from src.core.config import generic_settings
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
-from src.core.utils import format_proxy, extract_number
+from src.core.utils import format_proxy, extract_number, clean_url
 
 
 class OzonParser:
@@ -20,14 +20,15 @@ class OzonParser:
         selected_proxy = await proxy_manager.get_next_proxy()
         formated_proxy = format_proxy(selected_proxy) if selected_proxy else None
         proxy = formated_proxy if formated_proxy else None
-
         logger.debug(f"Running parse task with proxy {selected_proxy}")
 
         context = await self.browser_session.new_context(proxy=proxy)
         browser_tab = await context.new_page()
-        # await monitor_network_errors(browser_tab)
 
-        return await func(*args, browser_tab=browser_tab, **kwargs)
+        result = await func(*args, browser_tab=browser_tab, **kwargs)
+
+        await browser_tab.close()
+        return result
 
     def _extract_discount(self, raw_discount: str) -> int | None:
         match = re.search(r"[−-](\d+)%", raw_discount)
@@ -36,6 +37,12 @@ class OzonParser:
                 return int(match.group(1))
         except Exception as e:
             logger.debug(f"Cannot extract discount: {e}")
+
+    def _replace_ozon_cover_url(self, url: str) -> str:
+        parts = url.split('/')
+        if len(parts) >= 2:
+            parts[-2] = 'wc1000'
+        return '/'.join(parts)
 
     def _find_hashtag(self, soup: BeautifulSoup) -> str | None:
         hashtag = None
@@ -159,10 +166,11 @@ class OzonParser:
                             logger.debug(f"Unit variant skipped because its out of stock")
                             continue
 
-                        try:
-                            unit_variants.append(float(variant.get("data").get("searchableText")))
-                        except Exception as e:
-                            logger.debug(f"Error converting unit variant to float: {e}")
+                        data = variant.get("data").get("searchableText")
+                        if not data:
+                            continue
+
+                        unit_variants.append(data)
 
                     return unit_of_measure, unit_variants
         except Exception as e:
@@ -210,10 +218,10 @@ class OzonParser:
             if gallery_div:
                 for img in gallery_div.find_all("img", src=True):
                     src = img["src"]
-                    if "wc50" not in src:
-                        logger.debug(f"Cannot approve image, because parameter 'wc50' is missing in {src}")
+                    if not src:
                         continue
-                    image_urls.append(src.replace("wc50", "wc1000"))
+
+                    image_urls.append(self._replace_ozon_cover_url(src))
             else:
                 logger.warning(f"Cannot find webGallery attribute")
         except Exception as e:
@@ -234,36 +242,39 @@ class OzonParser:
         finally:
             return video_url
 
-    async def parse_products_urls(self, catalog_url, page: int, timeout: int = 3, browser_tab=None) -> list[str]:
+    async def parse_products_urls(self, catalog_url, page: int, timeout: int = 3, browser_tab=None) -> list[str] | list:
         links = []
         settings = generic_settings.OZON_PARSER_SETTINGS
 
-        await browser_tab.goto(catalog_url + f"&page={page}")
-        await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=10000)
-        await asyncio.sleep(timeout)
+        try:
+            await browser_tab.goto(catalog_url + f"&page={page}")
+            await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=timeout * 1000)
+            await asyncio.sleep(timeout)
 
-        cards = await browser_tab.query_selector_all(settings.get("CARDS_SELECTOR"))
-        logger.debug(f"Find {len(cards)} products in category {catalog_url}")
+            cards = await browser_tab.query_selector_all(settings.get("CARDS_SELECTOR"))
+            logger.debug(f"Find {len(cards)} products in category {catalog_url}")
 
-        for card in cards:
-            link_tag = await card.query_selector("a")
-            link = await link_tag.get_attribute("href") if link_tag else None
-            discount_span = await card.query_selector(settings.get("CARDS_DISCOUNT_SELECTOR"))
-            raw_discount: str = await discount_span.inner_text() if discount_span else None
+            for card in cards:
+                link_tag = await card.query_selector("a")
+                link = await link_tag.get_attribute("href") if link_tag else None
+                discount_span = await card.query_selector(settings.get("CARDS_DISCOUNT_SELECTOR"))
+                raw_discount: str = await discount_span.inner_text() if discount_span else None
 
-            if not link or not raw_discount:
-                logger.debug(f"Product with link = {'https://www.ozon.ru' + link} and "
-                             f"discount = {raw_discount} invalid!!!, skip")
-                continue
+                if not link or not raw_discount:
+                    logger.debug(f"Product with link = {'https://www.ozon.ru' + link} and "
+                                 f"discount = {raw_discount} invalid!!!, skip")
+                    continue
 
-            discount = self._extract_discount(raw_discount)
-            if not discount or discount < generic_settings.MIN_PRODUCT_DISCOUNT:
-                logger.debug(f"Product with link = {'https://www.ozon.ru' + link} and discount = {raw_discount} not "
-                             f"satisfied min discount!!!, skip")
-                continue
+                discount = self._extract_discount(raw_discount)
+                if not discount or discount < generic_settings.MIN_PRODUCT_DISCOUNT:
+                    logger.debug(f"Product with link = {'https://www.ozon.ru' + link} and discount = {raw_discount} not "
+                                 f"satisfied min discount!!!, skip")
+                    continue
 
-            result_link = "https://www.ozon.ru" + link
-            links.append(result_link)
+                result_link = clean_url("https://www.ozon.ru" + link)
+                links.append(result_link)
+        except Exception as e:
+            logger.warning(f"Error parse products links: {e}")
 
         return links
 

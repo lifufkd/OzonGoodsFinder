@@ -1,3 +1,4 @@
+from urllib.parse import urlparse, urlunparse
 import pytz
 import re
 from datetime import datetime, time
@@ -57,3 +58,9 @@ def extract_number(text: str) -> int | None:
         return int(re.sub(r"\D", "", text))
     except Exception as e:
         logger.warning(f"Cannot extract number: {e}")
+
+
+def clean_url(url: str) -> str:
+    parsed = urlparse(url)
+    cleaned = parsed._replace(query="")
+    return str(urlunparse(cleaned))

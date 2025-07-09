@@ -1,12 +1,15 @@
 from pydantic import BaseModel
 from typing import Optional
 
+from src.schemas.enums import SourceTypes
+
 
 class Product(BaseModel):
     url: str
 
 
 class FullProduct(Product):
+    source_type: SourceTypes
     title: str
     hashtag: str
     rating: Optional[float] = None

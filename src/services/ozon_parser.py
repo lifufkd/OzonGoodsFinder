@@ -60,9 +60,10 @@ class OzonParserService:
                 for product in existed_urls:
                     temp_products_urls.remove(product.url)
 
-                collected_products += len(temp_products_urls)
                 page += 1
-                products_urls.append(temp_products_urls)
+                collected_products += len(temp_products_urls)
+
+                products_urls.extend(temp_products_urls)
 
             products = [Product(url=product_url) for product_url in products_urls[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]]
             catalog_with_products = CatalogWithProducts(
@@ -77,26 +78,18 @@ class OzonParserService:
     async def get_product(self, product: Product, timeout: int) -> FullProduct | None:
         ozon_parser = OzonParser(self.browser)
         result = None
-        existed_products_urls = None
 
         try:
-            existed_products = await self.get_products_from_db()
-            existed_products_urls = [product.url for product in existed_products]
-        except Exception as e:
-            logger.warning(f"Error getting all products from DB: {e}")
-
-        try:
-            if existed_products_urls is not None:
-                raw_product = await ozon_parser.allocate_browser(
-                    ozon_parser.parse_product,
-                    product.url,
-                    existed_products_urls,
-                    timeout
-                )
-                result = FullProduct(
-                    url=product.url,
-                    **raw_product
-                )
+            raw_product = await ozon_parser.allocate_browser(
+                ozon_parser.parse_product,
+                product.url,
+                timeout
+            )
+            result = FullProduct(
+                url=product.url,
+                source_type=SourceTypes.OZON,
+                **raw_product
+            )
         except Exception as e:
             logger.warning(f"Error parsing product {product.url}: {e}")
 
@@ -112,11 +105,14 @@ class OzonParserService:
 
         async for catalogs_chunk in chunk_generator(catalogs, max_threads):
             tasks = [asyncio.create_task(self.get_new_products_links(catalog, timeout)) for catalog in catalogs_chunk]
-            data = await asyncio.gather(*tasks)  # TODO: Отфильтровать по имеющимся в БД
+            data = await asyncio.gather(*tasks)
             data = list(filter(None, data))  # Filter empty catalogs
 
             catalogs_with_products.extend(data)
             count += len(data)
+
+            # sleep_delay = random.uniform(timeout-1 if timeout-1 > 0 else 0, timeout)
+            # await asyncio.sleep(sleep_delay)
 
         logger.debug(f"Parsed {count} products links from all categories")
         return catalogs_with_products
@@ -131,12 +127,15 @@ class OzonParserService:
 
         for catalog in catalogs_with_products:
             catalog_full_product = []
-            async for product_chunk in chunk_generator(catalog.products, max_threads):
+            async for product_chunk in chunk_generator(catalog.products[:5], max_threads):
                 tasks = [asyncio.create_task(self.get_product(product, timeout)) for product in product_chunk]
                 full_products = await asyncio.gather(*tasks)
                 full_products = list(filter(None, full_products))
 
                 catalog_full_product.extend(full_products)
+
+                # sleep_delay = random.uniform(timeout-1 if timeout-1 > 0 else 0, timeout)
+                # await asyncio.sleep(sleep_delay)
 
             catalogs_with_full_products.append(
                 CatalogWithFullProducts(
@@ -174,7 +173,7 @@ class OzonParserService:
         products = []
 
         try:
-            async with get_session() as session:
+            async for session in get_session():
                 products_repository = ProductsRepository(session)
                 data = await products_repository.get_by_urls(urls)
                 products = await many_sqlalchemy_to_pydantic(
@@ -189,7 +188,7 @@ class OzonParserService:
     async def add_products_to_db(self, products: list[FullProduct]) -> list[ExistedProduct]:
         updated_products = []
 
-        async with get_session() as session:
+        async for session in get_session():
             try:
                 products_repository = ProductsRepository(session)
                 for product in products:
@@ -210,14 +209,16 @@ class OzonParserService:
 
     async def get_new_products(self) -> list[CatalogWithDBProducts]:
         settings = generic_settings.BROWSER_SETTINGS
-        catalogs = self.get_catalogs()
 
-        logger.info(f"Starting updating products...")
         async with Stealth().use_async(async_playwright()) as session:
 
             logger.debug("Launching browser...")
             self.browser = await session.chromium.launch(headless=settings.get("HEADLESS"))
             logger.debug("Browser successfully launched!")
+
+            logger.debug("Getting products catalogs from config...")
+            catalogs = self.get_catalogs()
+            logger.debug("Catalogs successfully retrieved!")
 
             logger.info(f"Starting parsing new products links from {len(catalogs)} catalogs...")
             catalogs_with_products = await self.get_catalogs_with_products(
@@ -226,6 +227,7 @@ class OzonParserService:
                 settings.get("TIMEOUT")
             )
             logger.info(f"Products links parsed!")
+            logger.debug(len(catalogs_with_products[0].products))
 
             logger.info(f"Starting parsing new products...")
             catalogs_with_full_products = await self.get_catalogs_with_full_products(
@@ -239,20 +241,20 @@ class OzonParserService:
             catalogs_with_db_products = await self.save_products_to_db(catalogs_with_full_products)
             logger.info(f"Products saved!")
 
-        logger.info(f"Products updated successfully finished!")
-
         return catalogs_with_db_products
 
 
 async def update_products():
     setup_logger()
-    logger.info("Starting update products")
+    logger.info(f"Starting updating products...")
 
     proxy_manager = ProxyManager(redis_client)
     await proxy_manager.init_proxies()
-    ozon_parser = OzonParserService()
 
+    ozon_parser = OzonParserService()
     new_products = await ozon_parser.get_new_products()
+
+    logger.info(f"Products updated successfully finished!")
 
 
 if __name__ == '__main__':
