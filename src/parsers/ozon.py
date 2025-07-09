@@ -234,18 +234,18 @@ class OzonParser:
         finally:
             return video_url
 
-    async def parse_products_urls(self, catalog_url, timeout: int = 3, browser_tab=None) -> list[str]:
+    async def parse_products_urls(self, catalog_url, page: int, timeout: int = 3, browser_tab=None) -> list[str]:
         links = []
         settings = generic_settings.OZON_PARSER_SETTINGS
 
-        await browser_tab.goto(catalog_url)
+        await browser_tab.goto(catalog_url + f"&page={page}")
         await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=10000)
         await asyncio.sleep(timeout)
 
         cards = await browser_tab.query_selector_all(settings.get("CARDS_SELECTOR"))
         logger.debug(f"Find {len(cards)} products in category {catalog_url}")
 
-        for card in cards[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]:
+        for card in cards:
             link_tag = await card.query_selector("a")
             link = await link_tag.get_attribute("href") if link_tag else None
             discount_span = await card.query_selector(settings.get("CARDS_DISCOUNT_SELECTOR"))
@@ -297,8 +297,8 @@ class OzonParser:
                 "unit_of_measure": unit_of_measure,
                 "unit_variants": unit_variants if unit_variants else None,
                 "characteristics": characteristics if characteristics else None,
-                "photos": photos if photos else None,
-                "video": video_src
+                "photos_urls": photos if photos else None,
+                "video_url": video_src
             }
         except Exception as e:
             logger.warning(f"Error parse product: {e}")

@@ -1,5 +1,6 @@
-from src.schemas.categories import CatalogWithProducts, CatalogWithFullProducts
-from src.schemas.products import Product, FullProduct # noqa
+from src.schemas.categories import CatalogWithProducts, CatalogWithFullProducts, CatalogWithDBProducts
+from src.schemas.products import Product, FullProduct, ExistedProduct # noqa
 
 CatalogWithProducts.model_rebuild()
 CatalogWithFullProducts.model_rebuild()
+CatalogWithDBProducts.model_rebuild()

@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class Product(BaseModel):
-    ozon_url: str
+    url: str
 
 
 class FullProduct(Product):
@@ -16,5 +16,9 @@ class FullProduct(Product):
     unit_of_measure: Optional[str] = None
     unit_variants: Optional[list] = None
     characteristics: Optional[dict] = None
-    photos: Optional[list] = None
-    video: Optional[str] = None
+    photos_urls: Optional[list] = None
+    video_url: Optional[str] = None
+
+
+class ExistedProduct(FullProduct):
+    id: int

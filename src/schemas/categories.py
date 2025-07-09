@@ -1,16 +1,22 @@
 from pydantic import BaseModel
 
+from src.schemas.enums import SourceTypes
+
 
 class Catalog(BaseModel):
     tg_group_id: int
     tg_topic_id: int
-    ozon_url: str
+    source_type: SourceTypes
+    url: str
 
 
 class CatalogWithProducts(Catalog):
-    ozon_products: list["Product"]
+    products: list["Product"]
 
 
 class CatalogWithFullProducts(Catalog):
-    ozon_products: list["FullProduct"]
+    products: list["FullProduct"]
 
+
+class CatalogWithDBProducts(Catalog):
+    products: list["ExistedProduct"]

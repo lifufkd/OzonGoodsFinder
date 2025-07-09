@@ -9,3 +9,7 @@ class LoggerLevels(Enum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
+
+
+class SourceTypes(Enum):
+    OZON = "OZON"
