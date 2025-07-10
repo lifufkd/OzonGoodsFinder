@@ -1,5 +1,5 @@
 from sqlalchemy import BIGINT, Enum as SAEnum, func, JSON
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 
 from src.database.base import Base
@@ -40,4 +40,10 @@ class Product(Base):
     created_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now()
+    )
+
+    tg_message: Mapped["TgMessages"] = relationship(
+        back_populates="product",
+        uselist=False,
+        cascade="all, delete-orphan",
     )

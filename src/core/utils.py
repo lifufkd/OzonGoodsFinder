@@ -64,3 +64,7 @@ def clean_url(url: str) -> str:
     parsed = urlparse(url)
     cleaned = parsed._replace(query="")
     return str(urlunparse(cleaned))
+
+
+def remove_all_whitespace(text: str) -> str:
+    return re.sub(r'\s+', '', text)

@@ -4,15 +4,12 @@ from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
 from src.schemas.categories import Catalog, CatalogWithProducts, CatalogWithFullProducts, CatalogWithDBProducts
-from src.schemas.products import Product, FullProduct, ExistedProduct
+from src.schemas.products import Product, FullProduct, DBProduct
 from src.repositories.products import ProductsRepository
 from src.core.orm_to_dto import many_sqlalchemy_to_pydantic, sqlalchemy_to_pydantic
 from src.core.config import generic_settings
 from src.parsers.ozon import OzonParser
 from src.core.utils import chunk_generator
-from src.core.proxy_manager import ProxyManager
-from src.core.redis_client import redis_client
-from src.core.logger import setup_logger
 from src.schemas.enums import SourceTypes
 from src.database.session import get_session
 
@@ -29,14 +26,13 @@ class OzonParserService:
             for first_sub_category in category.get("SUB_CATEGORIES"):
                 tg_topic_id = first_sub_category.get('TG_TOPIC_ID')
                 for second_sub_category in first_sub_category.get("SUB_CATEGORIES"):
-                    if second_sub_category.get("PARSE_SOURCE") != "OZON":
+                    if second_sub_category.get("PARSE_SOURCE") != SourceTypes.OZON.value:
                         continue
 
                     result.append(
                         Catalog(
                             tg_group_id=tg_group_id,
                             tg_topic_id=tg_topic_id,
-                            source_type=SourceTypes.OZON,
                             url=second_sub_category.get("URL")
                         )
                     )
@@ -127,7 +123,7 @@ class OzonParserService:
 
         for catalog in catalogs_with_products:
             catalog_full_product = []
-            async for product_chunk in chunk_generator(catalog.products[:5], max_threads):
+            async for product_chunk in chunk_generator(catalog.products[:5], max_threads):  # TODO: Remove [:5]
                 tasks = [asyncio.create_task(self.get_product(product, timeout)) for product in product_chunk]
                 full_products = await asyncio.gather(*tasks)
                 full_products = list(filter(None, full_products))
@@ -141,7 +137,6 @@ class OzonParserService:
                 CatalogWithFullProducts(
                     tg_group_id=catalog.tg_group_id,
                     tg_topic_id=catalog.tg_topic_id,
-                    source_type=catalog.source_type,
                     url=catalog.url,
                     products=catalog_full_product
                 )
@@ -169,7 +164,7 @@ class OzonParserService:
 
         return catalogs_with_db_products
 
-    async def get_products_by_urls_from_db(self, urls: list[str]) -> list[ExistedProduct] | list:
+    async def get_products_by_urls_from_db(self, urls: list[str]) -> list[DBProduct] | list:
         products = []
 
         try:
@@ -178,14 +173,14 @@ class OzonParserService:
                 data = await products_repository.get_by_urls(urls)
                 products = await many_sqlalchemy_to_pydantic(
                     data,
-                    ExistedProduct
+                    DBProduct
                 )
         except Exception as e:
             logger.error(f"Error getting products from DB: {e}")
 
         return products
 
-    async def add_products_to_db(self, products: list[FullProduct]) -> list[ExistedProduct]:
+    async def add_products_to_db(self, products: list[FullProduct]) -> list[DBProduct]:
         updated_products = []
 
         async for session in get_session():
@@ -196,7 +191,7 @@ class OzonParserService:
                     updated_products.append(
                         await sqlalchemy_to_pydantic(
                             orm_product,
-                            ExistedProduct
+                            DBProduct
                         )
                     )
             except Exception as e:
@@ -223,8 +218,8 @@ class OzonParserService:
             logger.info(f"Starting parsing new products links from {len(catalogs)} catalogs...")
             catalogs_with_products = await self.get_catalogs_with_products(
                 catalogs,
-                settings.get("MAX_CONCURRENT_TABS"),
-                settings.get("TIMEOUT")
+                settings.get("MAX_CONCURRENT_PARSING_TASKS"),
+                generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
             )
             logger.info(f"Products links parsed!")
             logger.debug(len(catalogs_with_products[0].products))
@@ -232,8 +227,8 @@ class OzonParserService:
             logger.info(f"Starting parsing new products...")
             catalogs_with_full_products = await self.get_catalogs_with_full_products(
                 catalogs_with_products,
-                settings.get("MAX_CONCURRENT_TABS"),
-                settings.get("TIMEOUT")
+                settings.get("MAX_CONCURRENT_PARSING_TASKS"),
+                generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
             )
             logger.info(f"Products parsed!")
 
@@ -242,20 +237,3 @@ class OzonParserService:
             logger.info(f"Products saved!")
 
         return catalogs_with_db_products
-
-
-async def update_products():
-    setup_logger()
-    logger.info(f"Starting updating products...")
-
-    proxy_manager = ProxyManager(redis_client)
-    await proxy_manager.init_proxies()
-
-    ozon_parser = OzonParserService()
-    new_products = await ozon_parser.get_new_products()
-
-    logger.info(f"Products updated successfully finished!")
-
-
-if __name__ == '__main__':
-    asyncio.run(update_products())

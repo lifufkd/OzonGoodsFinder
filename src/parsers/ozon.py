@@ -7,7 +7,7 @@ from loguru import logger
 from src.core.config import generic_settings
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
-from src.core.utils import format_proxy, extract_number, clean_url
+from src.core.utils import format_proxy, extract_number, clean_url, remove_all_whitespace
 
 
 class OzonParser:
@@ -58,7 +58,10 @@ class OzonParser:
 
             data = json.loads(data_state)
             breadcrumbs = data.get("breadcrumbs")
-            hashtag = breadcrumbs[-1]["text"]
+
+            raw_pre_last_hashtag = breadcrumbs[-2]["text"]
+            raw_last_hashtag = breadcrumbs[-1]["text"]
+            hashtag = f"{remove_all_whitespace(raw_pre_last_hashtag)}_{remove_all_whitespace(raw_last_hashtag)}"
         except Exception as e:
             logger.warning(f"Cannot find hashtag: {e}")
         finally:
@@ -178,7 +181,7 @@ class OzonParser:
         finally:
             return unit_of_measure, unit_variants
 
-    def _find_characteristics(self, soup: BeautifulSoup, filter: list) -> dict:
+    def _find_characteristics(self, soup: BeautifulSoup, filter: list | None = None) -> dict:
         result = {}
         try:
             div = soup.find("div", id=re.compile(r"^state-webShortCharacteristics-"))
@@ -200,7 +203,7 @@ class OzonParser:
 
                     if not name or not value:
                         continue
-                    if name in filter:
+                    if filter and name in filter:
                         continue
 
                     result[name] = value
@@ -291,12 +294,13 @@ class OzonParser:
             rating, reviews = self._find_rating_and_review(soup)
             discount = self._find_discount(soup)
             price = self._find_price(soup)
-            unit_of_measure, unit_variants = self._find_unit_of_measure(soup)
-            characteristics = self._find_characteristics(soup, filter=[unit_of_measure])
+            # unit_of_measure, unit_variants = self._find_unit_of_measure(soup)  # Disabled because not used anymore
+            # characteristics = self._find_characteristics(soup, filter=[unit_of_measure])  # Disabled because not used anymore
+            characteristics = self._find_characteristics(soup)
             video_src = self._find_video(soup)
             photos = []
             if not video_src:
-                photos = list(dict.fromkeys(self._find_photos(soup)))[:2]   # Limit only 2 photo
+                photos = list(dict.fromkeys(self._find_photos(soup)))[:generic_settings.PRODUCTS_PHOTOS_QUANTITY]
 
             return {
                 "title": title,
@@ -305,8 +309,8 @@ class OzonParser:
                 "reviews": reviews,
                 "discount": discount,
                 "price": price,
-                "unit_of_measure": unit_of_measure,
-                "unit_variants": unit_variants if unit_variants else None,
+                # "unit_of_measure": unit_of_measure,  # Disabled because not used anymore
+                # "unit_variants": unit_variants if unit_variants else None,  # Disabled because not used anymore
                 "characteristics": characteristics if characteristics else None,
                 "photos_urls": photos if photos else None,
                 "video_url": video_src

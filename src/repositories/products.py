@@ -18,6 +18,14 @@ class ProductsRepository:
 
         return list(result.scalars().all())
 
+    async def get_by_ids(self, products_ids: list[int]) -> list[Product]:
+        query = (
+            select(Product)
+            .where(Product.id.in_(products_ids))
+        )
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def add(self, product: FullProduct) -> Product:
         data = Product(
             **product.model_dump()
@@ -26,3 +34,6 @@ class ProductsRepository:
         await self.session.flush()
 
         return data
+
+    async def delete(self, product: Product) -> None:
+        await self.session.delete(product)

@@ -1,5 +1,5 @@
 from sqlalchemy import BIGINT, UniqueConstraint, ForeignKey, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 
 from src.database.base import Base
@@ -13,7 +13,12 @@ class TgMessages(Base):
     )
     product_id: Mapped[int] = mapped_column(
         BIGINT,
-        ForeignKey('products.id')
+        ForeignKey('products.id'),
+        unique=True
+    )
+    tg_message_id: Mapped[int] = mapped_column(
+        BIGINT,
+        nullable=False
     )
     tg_group_id: Mapped[int] = mapped_column(
         BIGINT,
@@ -28,6 +33,15 @@ class TgMessages(Base):
         server_default=func.now()
     )
 
+    product: Mapped["Product"] = relationship(
+        back_populates="tg_message"
+    )
+
     __table_args__ = (
-        UniqueConstraint('tg_group_id', 'tg_topic_id'),
+        UniqueConstraint(
+            'product_id',
+            'tg_group_id',
+            'tg_topic_id',
+            name='tg_messages_product_id_tg_group_id_tg_topic_id_key'
+        ),
     )

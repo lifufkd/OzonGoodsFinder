@@ -23,5 +23,9 @@ class FullProduct(Product):
     video_url: Optional[str] = None
 
 
-class ExistedProduct(FullProduct):
+class DBProduct(FullProduct):
     id: int
+
+
+class TgProduct(DBProduct):
+    tg_message_id: int

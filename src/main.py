@@ -2,7 +2,7 @@ import asyncio
 from loguru import logger
 
 from src.core.logger import setup_logger
-from src.scheduler.queue import taskiq_redis_source
+from src.scheduler.task_queue import taskiq_redis_source
 from src.scheduler.tasks import update_products, clean_old_products
 from src.core.utils import build_tasks_cron_expression, delete_schedule_keys
 from src.core.config import generic_settings
