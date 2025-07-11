@@ -3,10 +3,12 @@ import asyncio
 import json
 from bs4 import BeautifulSoup
 from loguru import logger
+from playwright.async_api import Error, TimeoutError
 
 from src.core.config import generic_settings
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
+from src.core.exceptions import ProxyError
 from src.core.utils import format_proxy, extract_number, clean_url, remove_all_whitespace
 
 
@@ -15,20 +17,54 @@ class OzonParser:
         self.browser_session = browser_session
 
     async def allocate_browser(self, func, *args, **kwargs):
+        extracted_proxy = False
         proxy_manager = ProxyManager(redis_client)
 
         selected_proxy = await proxy_manager.get_next_proxy()
-        formated_proxy = format_proxy(selected_proxy) if selected_proxy else None
-        proxy = formated_proxy if formated_proxy else None
-        logger.debug(f"Running parse task with proxy {selected_proxy}")
+        if selected_proxy is None:
+            browser_tab = None
+            logger.debug(f"Try 1/1. Run without proxy")
 
-        context = await self.browser_session.new_context(proxy=proxy)
-        browser_tab = await context.new_page()
+            try:
+                context = await self.browser_session.new_context()
+                browser_tab = await context.new_page()
 
-        result = await func(*args, browser_tab=browser_tab, **kwargs)
+                return await func(*args, browser_tab=browser_tab, **kwargs)
+            except ProxyError:
+                logger.critical(f"Host IP was banned, can't continue")
+                return None
+            finally:
+                if browser_tab:
+                    await browser_tab.close()
+        else:
+            proxy = format_proxy(selected_proxy)
+            for attempt in range(generic_settings.PROXY_RETRIES_COUNT):
+                browser_tab = None
+                logger.debug(f"Try {attempt + 1}/{generic_settings.PROXY_RETRIES_COUNT}. Run with proxy: {selected_proxy}")
 
-        await browser_tab.close()
-        return result
+                try:
+                    context = await self.browser_session.new_context(proxy=proxy)
+                    browser_tab = await context.new_page()
+
+                    result = await func(*args, browser_tab=browser_tab, **kwargs)
+                    if extracted_proxy:
+                        await proxy_manager.return_proxy(selected_proxy)
+
+                    return result
+                except ProxyError:
+                    if not extracted_proxy:
+                        await proxy_manager.remove_proxy(selected_proxy)
+                        extracted_proxy = True
+
+                    backoff = generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT") * (2 ** attempt)
+                    logger.warning(f"Proxy {selected_proxy} has been temporarily banned, retry after {backoff} seconds")
+                    await asyncio.sleep(backoff)
+                finally:
+                    if browser_tab:
+                        await browser_tab.close()
+
+        logger.warning(f"Proxy {selected_proxy} has been banned")
+        return None
 
     def _extract_discount(self, raw_discount: str) -> int | None:
         match = re.search(r"[−-](\d+)%", raw_discount)
@@ -247,10 +283,11 @@ class OzonParser:
 
     async def parse_products_urls(self, catalog_url, page: int, timeout: int = 3, browser_tab=None) -> list[str] | list:
         links = []
-        settings = generic_settings.OZON_PARSER_SETTINGS
 
         try:
-            await browser_tab.goto(catalog_url + f"&page={page}")
+            settings = generic_settings.OZON_PARSER_SETTINGS
+
+            await browser_tab.goto(catalog_url + f"&page={page}", timeout=timeout*5*1000)
             await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=timeout * 1000)
             await asyncio.sleep(timeout)
 
@@ -276,14 +313,20 @@ class OzonParser:
 
                 result_link = clean_url("https://www.ozon.ru" + link)
                 links.append(result_link)
+        except Error as e:
+            if "proxy" in str(e).lower() or "net" in str(e) or "timeout" in str(e).lower():
+                raise ProxyError()
+            else:
+                logger.warning(f"Error parse products links: {e}")
         except Exception as e:
             logger.warning(f"Error parse products links: {e}")
 
         return links
 
     async def parse_product(self, product_url: str, timeout: int = 3, browser_tab=None) -> dict | None:
+
         try:
-            await browser_tab.goto(product_url)
+            await browser_tab.goto(product_url, timeout=timeout*5*1000)
             await asyncio.sleep(timeout)
 
             content = await browser_tab.content()
@@ -315,6 +358,11 @@ class OzonParser:
                 "photos_urls": photos if photos else None,
                 "video_url": video_src
             }
+        except Error as e:
+            if "proxy" in str(e).lower() or "net" in str(e) or "timeout" in str(e).lower():
+                raise ProxyError()
+            else:
+                logger.warning(f"Error parse product: {e}")
         except Exception as e:
             logger.warning(f"Error parse product: {e}")
 

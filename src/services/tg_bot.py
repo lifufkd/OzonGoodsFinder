@@ -1,7 +1,7 @@
 import asyncio
 from loguru import logger
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
 
 from src.uow.tg_bot_uow import TgBotUow
 from src.schemas.products import DBProduct, TgProduct
@@ -53,7 +53,21 @@ class TgBotService:
 
         return keyboard
 
-    async def send_message(self, chat_id: int, topic_id: int, product: DBProduct, tg_bot_session: AsyncTeleBot) -> TgProduct | None:
+    async def verify_tg_permissions(self, chat_id: int) -> bool:
+        try:
+            async with self.tg_bot_uow as tg_bot:
+                me = await tg_bot.bot.get_chat_member(chat_id, (await tg_bot.bot.get_me()).id)
+                if not isinstance(me, ChatMemberAdministrator):
+                    return False
+                if me.status in ("administrator", "creator"):
+                    return True
+                else:
+                    return False
+        except Exception as e:
+            logger.error(f"Error check tg permissions: {e}")
+            return False
+
+    async def _send_message(self, chat_id: int, topic_id: int, product: DBProduct, tg_bot_session: AsyncTeleBot) -> TgProduct | None:
         try:
             if product.video_url:
                 message = await tg_bot_session.send_video(
@@ -100,35 +114,40 @@ class TgBotService:
             )
             return tg_product
 
-    async def save_send_messages_to_db(self, catalogs: list[CatalogWithTgProducts]) -> None:
-        async for session in get_session():
-            try:
-                tg_messages_repository = TgMessagesRepository(session)
-                for catalog in catalogs:
-                    for product in catalog.products:
-                        tg_message = AddTgMessage(
-                            product_id=product.id,
-                            tg_message_id=product.tg_message_id,
-                            tg_group_id=catalog.tg_group_id,
-                            tg_topic_id=catalog.tg_topic_id
-                        )
-                        await tg_messages_repository.add(tg_message)
-            except Exception as e:
-                logger.error(f"Error adding send tg messages to DB: {e}")
-                await session.rollback()
-            else:
-                await session.commit()
+    async def _save_send_messages_to_db(self, catalogs: list[CatalogWithTgProducts]) -> None:
+
+        try:
+            async for session in get_session():
+                try:
+                    tg_messages_repository = TgMessagesRepository(session)
+                    for catalog in catalogs:
+                        for product in catalog.products:
+                            tg_message = AddTgMessage(
+                                product_id=product.id,
+                                tg_message_id=product.tg_message_id,
+                                tg_group_id=catalog.tg_group_id,
+                                tg_topic_id=catalog.tg_topic_id
+                            )
+                            await tg_messages_repository.add(tg_message)
+                except Exception as e:
+                    logger.error(f"Error adding send tg messages to DB: {e}")
+                    await session.rollback()
+                else:
+                    await session.commit()
+        except Exception as e:
+            logger.critical(f"Error saving tg messages to DB: {e}")
 
     async def send_products(self, catalogs: list[CatalogWithDBProducts]) -> None:
-        settings = generic_settings.TG_BOT_SETTINGS
         result = []
 
         try:
+            settings = generic_settings.TG_BOT_SETTINGS
+
             async with self.tg_bot_uow as tg_bot:
                 for index, catalog in enumerate(catalogs):
                     success_send = []
                     async for products_chunk in chunk_generator(catalog.products, settings.get("MAX_CONCURRENT_SENDING_TASKS")):
-                        tasks = [asyncio.create_task(self.send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for product in products_chunk]
+                        tasks = [asyncio.create_task(self._send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for product in products_chunk]
                         send_products = await asyncio.gather(*tasks)
 
                         for send_product in send_products:
@@ -147,6 +166,6 @@ class TgBotService:
                     )
                     result.append(catalog_with_products)
 
-            await self.save_send_messages_to_db(result)
+            await self._save_send_messages_to_db(result)
         except Exception as e:
             logger.error(f"Error send messages to TG: {e}")

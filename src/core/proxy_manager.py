@@ -32,6 +32,11 @@ class ProxyManager:
         removed_count = await self.redis.lrem(self.proxies_key, 0, proxy_to_remove)
         return removed_count > 0
 
+    async def return_proxy(self, proxy: str) -> None:
+        proxies = await self.get_all_proxies()
+        if proxy not in proxies:
+            await self.redis.rpush(self.proxies_key, proxy)
+
     async def get_all_proxies(self) -> list[str]:
         proxies = await self.redis.lrange(self.proxies_key, 0, -1)
         return [p.decode() if isinstance(p, bytes) else p for p in proxies]

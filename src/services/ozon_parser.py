@@ -3,6 +3,8 @@ from loguru import logger
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
+from src.services.tg_bot import TgBotService
+from src.services.utils import get_catalogs
 from src.schemas.categories import Catalog, CatalogWithProducts, CatalogWithFullProducts, CatalogWithDBProducts
 from src.schemas.products import Product, FullProduct, DBProduct
 from src.repositories.products import ProductsRepository
@@ -15,29 +17,9 @@ from src.database.session import get_session
 
 
 class OzonParserService:
-    def __init__(self):
+    def __init__(self, tg_bot_service: TgBotService):
+        self.tg_bot_service = tg_bot_service
         self.browser = None
-
-    def get_catalogs(self) -> list[Catalog]:
-        result = []
-
-        for category in generic_settings.CATEGORIES:
-            tg_group_id = category.get('TG_GROUP_ID')
-            for first_sub_category in category.get("SUB_CATEGORIES"):
-                tg_topic_id = first_sub_category.get('TG_TOPIC_ID')
-                for second_sub_category in first_sub_category.get("SUB_CATEGORIES"):
-                    if second_sub_category.get("PARSE_SOURCE") != SourceTypes.OZON.value:
-                        continue
-
-                    result.append(
-                        Catalog(
-                            tg_group_id=tg_group_id,
-                            tg_topic_id=tg_topic_id,
-                            url=second_sub_category.get("URL")
-                        )
-                    )
-
-        return result
 
     async def get_new_products_links(self, catalog: Catalog, timeout: int) -> CatalogWithProducts | None:
         ozon_parser = OzonParser(self.browser)
@@ -150,17 +132,20 @@ class OzonParserService:
     async def save_products_to_db(self, catalogs_with_full_products: list[CatalogWithFullProducts]) -> list[CatalogWithDBProducts]:
         catalogs_with_db_products = []
 
-        for catalog in catalogs_with_full_products:
-            updated_products = await self.add_products_to_db(catalog.products)
-            if not updated_products:
-                continue
+        try:
+            for catalog in catalogs_with_full_products:
+                updated_products = await self.add_products_to_db(catalog.products)
+                if not updated_products:
+                    continue
 
-            catalogs_with_db_products.append(
-                CatalogWithDBProducts(
-                    products=updated_products,
-                    **catalog.model_dump(exclude={"products"})
+                catalogs_with_db_products.append(
+                    CatalogWithDBProducts(
+                        products=updated_products,
+                        **catalog.model_dump(exclude={"products"})
+                    )
                 )
-            )
+        except Exception as e:
+            logger.critical(f"Error adding products to db: {e}")
 
         return catalogs_with_db_products
 
@@ -203,37 +188,44 @@ class OzonParserService:
         return updated_products
 
     async def get_new_products(self) -> list[CatalogWithDBProducts]:
-        settings = generic_settings.BROWSER_SETTINGS
+        catalogs_with_full_products = None
+        catalogs_with_db_products = None
 
-        async with Stealth().use_async(async_playwright()) as session:
-
-            logger.debug("Launching browser...")
-            self.browser = await session.chromium.launch(headless=settings.get("HEADLESS"))
-            logger.debug("Browser successfully launched!")
+        try:
+            settings = generic_settings.BROWSER_SETTINGS
 
             logger.debug("Getting products catalogs from config...")
-            catalogs = self.get_catalogs()
+            catalogs = await get_catalogs(self.tg_bot_service)
             logger.debug("Catalogs successfully retrieved!")
 
-            logger.info(f"Starting parsing new products links from {len(catalogs)} catalogs...")
-            catalogs_with_products = await self.get_catalogs_with_products(
-                catalogs,
-                settings.get("MAX_CONCURRENT_PARSING_TASKS"),
-                generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
-            )
-            logger.info(f"Products links parsed!")
-            logger.debug(len(catalogs_with_products[0].products))
+            async with Stealth().use_async(async_playwright()) as session:
 
-            logger.info(f"Starting parsing new products...")
-            catalogs_with_full_products = await self.get_catalogs_with_full_products(
-                catalogs_with_products,
-                settings.get("MAX_CONCURRENT_PARSING_TASKS"),
-                generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
-            )
-            logger.info(f"Products parsed!")
+                logger.debug("Launching browser...")
+                self.browser = await session.chromium.launch(headless=settings.get("HEADLESS"))
+                logger.debug("Browser successfully launched!")
 
-            logger.info(f"Starting saving new products to db...")
-            catalogs_with_db_products = await self.save_products_to_db(catalogs_with_full_products)
-            logger.info(f"Products saved!")
+                logger.info(f"Starting parsing new products links from {len(catalogs)} catalogs...")
+                catalogs_with_products = await self.get_catalogs_with_products(
+                    catalogs,
+                    settings.get("MAX_CONCURRENT_PARSING_TASKS"),
+                    generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
+                )
+                logger.info(f"Products links parsed!")
+
+                if catalogs_with_products:
+                    logger.info(f"Starting parsing new products...")
+                    catalogs_with_full_products = await self.get_catalogs_with_full_products(
+                        catalogs_with_products,
+                        settings.get("MAX_CONCURRENT_PARSING_TASKS"),
+                        generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
+                    )
+                    logger.info(f"Products parsed!")
+
+            if catalogs_with_full_products:
+                logger.info(f"Starting saving new products to db...")
+                catalogs_with_db_products = await self.save_products_to_db(catalogs_with_full_products)
+                logger.info(f"Products saved!")
+        except Exception as e:
+            logger.critical(f"Error getting new products: {e}")
 
         return catalogs_with_db_products

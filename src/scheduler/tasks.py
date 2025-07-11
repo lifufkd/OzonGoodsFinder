@@ -21,11 +21,12 @@ async def update_products():
     await proxy_manager.init_proxies()
 
     tg_bot_uow = TgBotUow(tg_settings.TG_BOT_TOKEN)
-    ozon_parser = OzonParserService()
     tg_bot_service = TgBotService(tg_bot_uow)
+    ozon_parser = OzonParserService(tg_bot_service)
 
     new_products = await ozon_parser.get_new_products()
-    await tg_bot_service.send_products(new_products)
+    if new_products:
+        await tg_bot_service.send_products(new_products)
 
     logger.info(f"Products updated finished!")
 
@@ -43,4 +44,4 @@ async def clean_old_products():
 
 
 if __name__ == '__main__':
-    asyncio.run(clean_old_products())
+    asyncio.run(update_products())
