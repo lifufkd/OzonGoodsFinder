@@ -8,7 +8,7 @@ from src.services.utils import get_catalogs
 from src.schemas.categories import Catalog, CatalogWithProducts, CatalogWithFullProducts, CatalogWithDBProducts
 from src.schemas.products import Product, FullProduct, DBProduct
 from src.repositories.products import ProductsRepository
-from src.core.orm_to_dto import many_sqlalchemy_to_pydantic, sqlalchemy_to_pydantic
+from src.core.orm_to_dto import sqlalchemy_to_pydantic
 from src.core.config import generic_settings
 from src.parsers.ozon import OzonParser
 from src.core.utils import chunk_generator
@@ -29,14 +29,18 @@ class OzonParserService:
         collected_products = 0
 
         try:
+            existed_urls = await self.get_products_from_db()
+
             while collected_products < generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
                 temp_products_urls = await ozon_parser.allocate_browser(ozon_parser.parse_products_urls, catalog.url, page, timeout)
                 if not temp_products_urls:
                     break
 
-                existed_urls = await self.get_products_by_urls_from_db(temp_products_urls)
-                for product in existed_urls:
-                    temp_products_urls.remove(product.url)
+                for existed_url in existed_urls:
+                    if existed_url not in temp_products_urls:
+                        continue
+
+                    temp_products_urls.remove(existed_url)
 
                 page += 1
                 collected_products += len(temp_products_urls)
@@ -89,9 +93,6 @@ class OzonParserService:
             catalogs_with_products.extend(data)
             count += len(data)
 
-            # sleep_delay = random.uniform(timeout-1 if timeout-1 > 0 else 0, timeout)
-            # await asyncio.sleep(sleep_delay)
-
         logger.debug(f"Parsed {count} products links from all categories")
         return catalogs_with_products
 
@@ -105,15 +106,12 @@ class OzonParserService:
 
         for catalog in catalogs_with_products:
             catalog_full_product = []
-            async for product_chunk in chunk_generator(catalog.products[:5], max_threads):  # TODO: Remove [:5]
+            async for product_chunk in chunk_generator(catalog.products, max_threads):
                 tasks = [asyncio.create_task(self.get_product(product, timeout)) for product in product_chunk]
                 full_products = await asyncio.gather(*tasks)
                 full_products = list(filter(None, full_products))
 
                 catalog_full_product.extend(full_products)
-
-                # sleep_delay = random.uniform(timeout-1 if timeout-1 > 0 else 0, timeout)
-                # await asyncio.sleep(sleep_delay)
 
             catalogs_with_full_products.append(
                 CatalogWithFullProducts(
@@ -149,17 +147,14 @@ class OzonParserService:
 
         return catalogs_with_db_products
 
-    async def get_products_by_urls_from_db(self, urls: list[str]) -> list[DBProduct] | list:
+    async def get_products_from_db(self) -> list[str] | list:
         products = []
 
         try:
             async for session in get_session():
                 products_repository = ProductsRepository(session)
-                data = await products_repository.get_by_urls(urls)
-                products = await many_sqlalchemy_to_pydantic(
-                    data,
-                    DBProduct
-                )
+                data = await products_repository.get_by_urls()
+                products.extend(data)
         except Exception as e:
             logger.error(f"Error getting products from DB: {e}")
 
@@ -172,13 +167,16 @@ class OzonParserService:
             try:
                 products_repository = ProductsRepository(session)
                 for product in products:
-                    orm_product = await products_repository.add(product)
-                    updated_products.append(
-                        await sqlalchemy_to_pydantic(
-                            orm_product,
-                            DBProduct
+                    try:
+                        orm_product = await products_repository.add(product)
+                        updated_products.append(
+                            await sqlalchemy_to_pydantic(
+                                orm_product,
+                                DBProduct
+                            )
                         )
-                    )
+                    except Exception as e:
+                        logger.warning(f"Product is duplicated, skipping save to DB: {e}")
             except Exception as e:
                 logger.error(f"Error adding products to DB: {e}")
                 await session.rollback()
@@ -201,7 +199,14 @@ class OzonParserService:
             async with Stealth().use_async(async_playwright()) as session:
 
                 logger.debug("Launching browser...")
-                self.browser = await session.chromium.launch(headless=settings.get("HEADLESS"))
+                self.browser = await session.chromium.launch(
+                    headless=settings.get("HEADLESS"),
+                    args=[
+                        '--enable-webgl',
+                        '--use-gl=swiftshader',
+                        '--enable-accelerated-2d-canvas'
+                    ]
+                )
                 logger.debug("Browser successfully launched!")
 
                 logger.info(f"Starting parsing new products links from {len(catalogs)} catalogs...")

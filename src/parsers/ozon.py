@@ -3,7 +3,7 @@ import asyncio
 import json
 from bs4 import BeautifulSoup
 from loguru import logger
-from playwright.async_api import Error, TimeoutError
+from playwright.async_api import Error
 
 from src.core.config import generic_settings
 from src.core.proxy_manager import ProxyManager
@@ -26,8 +26,29 @@ class OzonParser:
             logger.debug(f"Try 1/1. Run without proxy")
 
             try:
-                context = await self.browser_session.new_context()
+                context = await self.browser_session.new_context(
+                    **generic_settings.BROWSER_SETTINGS.get("CONTEXT_SETTINGS")
+                )
                 browser_tab = await context.new_page()
+                await browser_tab.add_init_script("""
+                    const getParameter = WebGLRenderingContext.prototype.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(param) {
+                      if (param === 37445) return "Intel Inc.";        // UNMASKED_VENDOR_WEBGL
+                      if (param === 37446) return "Intel Iris OpenGL"; // UNMASKED_RENDERER_WEBGL
+                      return getParameter.call(this, param);
+                    };
+                """)
+                await browser_tab.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'plugins', {
+                      get: () => [1, 2, 3, 4, 5],
+                    });
+
+                    Object.defineProperty(navigator, 'mimeTypes', {
+                      get: () => [1, 2, 3],
+                    });
+                    """
+                )
 
                 return await func(*args, browser_tab=browser_tab, **kwargs)
             except ProxyError:
@@ -40,11 +61,33 @@ class OzonParser:
             proxy = format_proxy(selected_proxy)
             for attempt in range(generic_settings.PROXY_RETRIES_COUNT):
                 browser_tab = None
-                logger.debug(f"Try {attempt + 1}/{generic_settings.PROXY_RETRIES_COUNT}. Run with proxy: {selected_proxy}")
+                logger.debug(f"Try {attempt + 1}/{generic_settings.PROXY_RETRIES_COUNT}. Run with proxy: {proxy}")
 
                 try:
-                    context = await self.browser_session.new_context(proxy=proxy)
+                    context = await self.browser_session.new_context(
+                        proxy=proxy,
+                        **generic_settings.BROWSER_SETTINGS.get("CONTEXT_SETTINGS")
+                    )
                     browser_tab = await context.new_page()
+                    await browser_tab.add_init_script("""
+                        const getParameter = WebGLRenderingContext.prototype.getParameter;
+                        WebGLRenderingContext.prototype.getParameter = function(param) {
+                          if (param === 37445) return "Intel Inc.";        // UNMASKED_VENDOR_WEBGL
+                          if (param === 37446) return "Intel Iris OpenGL"; // UNMASKED_RENDERER_WEBGL
+                          return getParameter.call(this, param);
+                        };
+                    """)
+                    await browser_tab.add_init_script(
+                        """
+                        Object.defineProperty(navigator, 'plugins', {
+                          get: () => [1, 2, 3, 4, 5],
+                        });
+    
+                        Object.defineProperty(navigator, 'mimeTypes', {
+                          get: () => [1, 2, 3],
+                        });
+                        """
+                    )
 
                     result = await func(*args, browser_tab=browser_tab, **kwargs)
                     if extracted_proxy:

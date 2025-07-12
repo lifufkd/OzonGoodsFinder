@@ -36,7 +36,7 @@ class Product(Base):
         nullable=True
     )
     video_url: Mapped[str] = mapped_column(nullable=True)
-    url: Mapped[str] = mapped_column(nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         nullable=False,
         server_default=func.now()

@@ -1,0 +1,86 @@
+services:
+  goods-finder:
+    image: ghcr.io/lifufkd/ozon-goods-finder:app-latest
+    build: .
+    env_file:
+      - ".env"
+    volumes:
+      - ./proxies.txt:/app/proxies.txt
+      - ./config.json:/app/config.json
+      - app_data:/app/app_data
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - backend
+
+  taskiq_scheduler:
+    image: ghcr.io/lifufkd/ozon-goods-finder:scheduler-latest
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ".env"
+    entrypoint: taskiq scheduler src.scheduler.task_queue:scheduler
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./proxies.txt:/app/proxies.txt
+      - ./config.json:/app/config.json
+      - app_data:/app/app_data
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+    networks:
+      - backend
+
+  taskiq_worker:
+    image: ghcr.io/lifufkd/ozon-goods-finder:worker-latest
+    build: .
+    restart: unless-stopped
+    env_file:
+      - ".env"
+    entrypoint: ./parser.sh
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - ./proxies.txt:/app/proxies.txt
+      - ./config.json:/app/config.json
+      - app_data:/app/app_data
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:latest
+    restart: unless-stopped
+    environment:
+       - POSTGRES_USER=${DB_USER:-postgres}
+       - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+       - POSTGRES_DB=${DB_DATABASE:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_data:
+
+networks:
+  backend:
