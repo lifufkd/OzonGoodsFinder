@@ -1,6 +1,6 @@
 import asyncio
 from loguru import logger
-from telebot.apihelper import ApiTelegramException
+from telebot.asyncio_helper import ApiTelegramException
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
 
@@ -69,6 +69,7 @@ class TgBotService:
             return False
 
     async def _send_message(self, chat_id: int, topic_id: int, product: DBProduct, tg_bot_session: AsyncTeleBot) -> TgProduct | None:
+        attempt = 1
 
         while True:
             try:
@@ -109,9 +110,13 @@ class TgBotService:
                         reply_markup=self._build_url_button(product.url)
                     )
             except ApiTelegramException as e:
-                if e.error_code == "429":
+                if e.error_code == 429:
                     logger.debug(f"Telegram API timeout, continue after 15 seconds")
-                    await asyncio.sleep(15)
+
+                    backoff = generic_settings.TG_BOT_SETTINGS.get("API_BASE_TIMEOUT") * (2 ** attempt)
+                    attempt += 1
+                    await asyncio.sleep(backoff)
+
                     continue
                 else:
                     logger.error(f"Error sending message to tg: {e}")
@@ -168,7 +173,7 @@ class TgBotService:
 
                             success_send.append(send_product)
 
-                        await asyncio.sleep(settings.get("TIMEOUT"))
+                        await asyncio.sleep(settings.get("CHUNK_TIMEOUT"))
 
                     catalog_with_products = CatalogWithTgProducts(
                         tg_group_id=catalog.tg_group_id,

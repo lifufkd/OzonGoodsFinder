@@ -29,18 +29,14 @@ class OzonParserService:
         collected_products = 0
 
         try:
-            existed_urls = await self.get_products_from_db()
+            existed_urls = set(await self.get_products_from_db())
 
             while collected_products < generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
                 temp_products_urls = await ozon_parser.allocate_browser(ozon_parser.parse_products_urls, catalog.url, page, timeout)
                 if not temp_products_urls:
                     break
 
-                for existed_url in existed_urls:
-                    if existed_url not in temp_products_urls:
-                        continue
-
-                    temp_products_urls.remove(existed_url)
+                temp_products_urls = [url for url in temp_products_urls if url not in existed_urls]
 
                 page += 1
                 collected_products += len(temp_products_urls)
@@ -177,6 +173,7 @@ class OzonParserService:
                         )
                     except Exception as e:
                         logger.warning(f"Product is duplicated, skipping save to DB: {e}")
+                        await session.rollback()
             except Exception as e:
                 logger.error(f"Error adding products to DB: {e}")
                 await session.rollback()
