@@ -111,10 +111,10 @@ class TgBotService:
                     )
             except ApiTelegramException as e:
                 if e.error_code == 429:
-                    logger.debug(f"Telegram API timeout, continue after 15 seconds")
-
                     backoff = generic_settings.TG_BOT_SETTINGS.get("API_BASE_TIMEOUT") * (2 ** attempt)
                     attempt += 1
+
+                    logger.debug(f"Telegram API timeout, continue after {backoff} seconds")
                     await asyncio.sleep(backoff)
 
                     continue
