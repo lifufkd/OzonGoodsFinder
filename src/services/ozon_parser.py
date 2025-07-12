@@ -213,7 +213,7 @@ class OzonParserService:
                 catalogs_with_products = await self.get_catalogs_with_products(
                     catalogs,
                     settings.get("MAX_CONCURRENT_PARSING_TASKS"),
-                    generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
+                    generic_settings.OZON_PARSER_SETTINGS.get("CATALOGS_TIMEOUT")
                 )
                 logger.info(f"Products links parsed!")
 
@@ -222,7 +222,7 @@ class OzonParserService:
                     catalogs_with_full_products = await self.get_catalogs_with_full_products(
                         catalogs_with_products,
                         settings.get("MAX_CONCURRENT_PARSING_TASKS"),
-                        generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT")
+                        generic_settings.OZON_PARSER_SETTINGS.get("PRODUCTS_TIMEOUT")
                     )
                     logger.info(f"Products parsed!")
 

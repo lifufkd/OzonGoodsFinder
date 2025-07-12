@@ -1,5 +1,6 @@
 import asyncio
 from loguru import logger
+from telebot.apihelper import ApiTelegramException
 from telebot.async_telebot import AsyncTeleBot
 from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
 
@@ -68,51 +69,62 @@ class TgBotService:
             return False
 
     async def _send_message(self, chat_id: int, topic_id: int, product: DBProduct, tg_bot_session: AsyncTeleBot) -> TgProduct | None:
-        try:
-            if product.video_url:
-                message = await tg_bot_session.send_video(
-                    chat_id=chat_id,
-                    message_thread_id=topic_id,
-                    video=product.video_url,
-                    caption=self._build_message_body(product),
-                    parse_mode="HTML",
-                    reply_markup=self._build_url_button(product.url)
-                )
-            elif product.photos_urls:
-                if len(product.photos_urls) == 1:
-                    message = await tg_bot_session.send_photo(
+
+        while True:
+            try:
+                if product.video_url:
+                    message = await tg_bot_session.send_video(
                         chat_id=chat_id,
                         message_thread_id=topic_id,
-                        photo=product.photos_urls[0],
+                        video=product.video_url,
                         caption=self._build_message_body(product),
                         parse_mode="HTML",
                         reply_markup=self._build_url_button(product.url)
                     )
+                elif product.photos_urls:
+                    if len(product.photos_urls) == 1:
+                        message = await tg_bot_session.send_photo(
+                            chat_id=chat_id,
+                            message_thread_id=topic_id,
+                            photo=product.photos_urls[0],
+                            caption=self._build_message_body(product),
+                            parse_mode="HTML",
+                            reply_markup=self._build_url_button(product.url)
+                        )
+                    else:
+                        message = await tg_bot_session.send_media_group(
+                            chat_id=chat_id,
+                            message_thread_id=topic_id,
+                            media=self._build_photo_pack(
+                                product.photos_urls,
+                                self._build_message_body(product, enable_link=True)
+                            )
+                        )
                 else:
-                    message = await tg_bot_session.send_media_group(
+                    message = await tg_bot_session.send_message(
                         chat_id=chat_id,
                         message_thread_id=topic_id,
-                        media=self._build_photo_pack(
-                            product.photos_urls,
-                            self._build_message_body(product, enable_link=True)
-                        )
+                        text=self._build_message_body(product),
+                        parse_mode="HTML",
+                        reply_markup=self._build_url_button(product.url)
                     )
+            except ApiTelegramException as e:
+                if e.error_code == "429":
+                    logger.debug(f"Telegram API timeout, continue after 15 seconds")
+                    await asyncio.sleep(15)
+                    continue
+                else:
+                    logger.error(f"Error sending message to tg: {e}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error sending message to tg: {e}")
+                return None
             else:
-                message = await tg_bot_session.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=topic_id,
-                    text=self._build_message_body(product),
-                    parse_mode="HTML",
-                    reply_markup=self._build_url_button(product.url)
+                tg_product = TgProduct(
+                    tg_message_id=message.message_id,
+                    **product.model_dump()
                 )
-        except Exception as e:
-            logger.error(f"Error sending message to tg: {e}")
-        else:
-            tg_product = TgProduct(
-                tg_message_id=message.message_id,
-                **product.model_dump()
-            )
-            return tg_product
+                return tg_product
 
     async def _save_send_messages_to_db(self, catalogs: list[CatalogWithTgProducts]) -> None:
 
