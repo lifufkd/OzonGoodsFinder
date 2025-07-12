@@ -7,7 +7,7 @@ services:
     volumes:
       - ./proxies.txt:/app/proxies.txt
       - ./config.json:/app/config.json
-      - app_data:/app/app_data
+      - ./app_data:/app/app_data
     environment:
       - DB_HOST=postgres
       - REDIS_HOST=redis
@@ -30,7 +30,7 @@ services:
     volumes:
       - ./proxies.txt:/app/proxies.txt
       - ./config.json:/app/config.json
-      - app_data:/app/app_data
+      - ./app_data:/app/app_data
     environment:
       - DB_HOST=postgres
       - REDIS_HOST=redis
@@ -50,7 +50,7 @@ services:
     volumes:
       - ./proxies.txt:/app/proxies.txt
       - ./config.json:/app/config.json
-      - app_data:/app/app_data
+      - ./app_data:/app/app_data
     environment:
       - DB_HOST=postgres
       - REDIS_HOST=redis
