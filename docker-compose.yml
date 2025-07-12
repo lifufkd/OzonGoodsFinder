@@ -60,6 +60,8 @@ services:
   postgres:
     image: postgres:latest
     restart: unless-stopped
+    ports:
+      - 5432:5432
     environment:
        - POSTGRES_USER=${DB_USER:-postgres}
        - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
