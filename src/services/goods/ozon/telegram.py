@@ -2,19 +2,16 @@ import asyncio
 from loguru import logger
 from telebot.asyncio_helper import ApiTelegramException
 from telebot.async_telebot import AsyncTeleBot
-from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
+from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 
-from src.uow.tg_bot_uow import TgBotUow
 from src.schemas.products import DBProduct, TgProduct
 from src.schemas.categories import CatalogWithDBProducts, CatalogWithTgProducts
-from src.schemas.tg_messages import AddTgMessage
 from src.core.config import generic_settings
 from src.core.utils import chunk_generator
-from src.database.session import get_session
-from src.repositories.tg_messages import TgMessagesRepository
+from src.uow.tg_bot_uow import TgBotUow
 
 
-class TgBotService:
+class OzonTelegramService:
     def __init__(self, tg_bot_uow: TgBotUow):
         self.tg_bot_uow = tg_bot_uow
 
@@ -53,20 +50,6 @@ class TgBotService:
         keyboard.add(InlineKeyboardButton("🛒 КУПИТЬ", url=url))
 
         return keyboard
-
-    async def verify_tg_permissions(self, chat_id: int) -> bool:
-        try:
-            async with self.tg_bot_uow as tg_bot:
-                me = await tg_bot.bot.get_chat_member(chat_id, (await tg_bot.bot.get_me()).id)
-                if not isinstance(me, ChatMemberAdministrator):
-                    return False
-                if me.status in ("administrator", "creator"):
-                    return True
-                else:
-                    return False
-        except Exception as e:
-            logger.error(f"Error check tg permissions: {e}")
-            return False
 
     async def _send_message(self, chat_id: int, topic_id: int, product: DBProduct, tg_bot_session: AsyncTeleBot) -> TgProduct | None:
         attempt = 1
@@ -109,6 +92,8 @@ class TgBotService:
                         parse_mode="HTML",
                         reply_markup=self._build_url_button(product.url)
                     )
+
+                break
             except ApiTelegramException as e:
                 if e.error_code == 429:
                     backoff = generic_settings.TG_BOT_SETTINGS.get("API_BASE_TIMEOUT") * (2 ** attempt)
@@ -124,65 +109,42 @@ class TgBotService:
             except Exception as e:
                 logger.error(f"Error sending message to tg: {e}")
                 return None
-            else:
-                tg_product = TgProduct(
-                    tg_message_id=message.message_id,
-                    **product.model_dump()
-                )
-                return tg_product
 
-    async def _save_send_messages_to_db(self, catalogs: list[CatalogWithTgProducts]) -> None:
+        tg_product = TgProduct(
+            tg_message_id=message.message_id,
+            **product.model_dump()
+        )
+        return tg_product
 
-        try:
-            async for session in get_session():
-                try:
-                    tg_messages_repository = TgMessagesRepository(session)
-                    for catalog in catalogs:
-                        for product in catalog.products:
-                            tg_message = AddTgMessage(
-                                product_id=product.id,
-                                tg_message_id=product.tg_message_id,
-                                tg_group_id=catalog.tg_group_id,
-                                tg_topic_id=catalog.tg_topic_id
-                            )
-                            await tg_messages_repository.add(tg_message)
-                except Exception as e:
-                    logger.error(f"Error adding send tg messages to DB: {e}")
-                    await session.rollback()
-                else:
-                    await session.commit()
-        except Exception as e:
-            logger.critical(f"Error saving tg messages to DB: {e}")
-
-    async def send_products(self, catalogs: list[CatalogWithDBProducts]) -> None:
-        result = []
+    async def send(self, catalog: CatalogWithDBProducts) -> CatalogWithTgProducts | None:
+        if catalog is None:
+            return None
 
         try:
             settings = generic_settings.TG_BOT_SETTINGS
 
             async with self.tg_bot_uow as tg_bot:
-                for index, catalog in enumerate(catalogs):
-                    success_send = []
-                    async for products_chunk in chunk_generator(catalog.products, settings.get("MAX_CONCURRENT_SENDING_TASKS")):
-                        tasks = [asyncio.create_task(self._send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for product in products_chunk]
-                        send_products = await asyncio.gather(*tasks)
+                success_send = []
+                async for products_chunk in chunk_generator(catalog.products,
+                                                            settings.get("MAX_CONCURRENT_SENDING_TASKS")):
+                    tasks = [asyncio.create_task(
+                        self._send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for
+                             product in products_chunk]
+                    send_products = await asyncio.gather(*tasks)
 
-                        for send_product in send_products:
-                            if not send_product:
-                                continue
+                    for send_product in send_products:
+                        if not send_product:
+                            continue
 
-                            success_send.append(send_product)
+                        success_send.append(send_product)
 
-                        await asyncio.sleep(settings.get("CHUNK_TIMEOUT"))
-
-                    catalog_with_products = CatalogWithTgProducts(
-                        tg_group_id=catalog.tg_group_id,
-                        tg_topic_id=catalog.tg_topic_id,
-                        url=catalog.url,
-                        products=success_send
-                    )
-                    result.append(catalog_with_products)
-
-            await self._save_send_messages_to_db(result)
+            catalog_with_products = CatalogWithTgProducts(
+                tg_group_id=catalog.tg_group_id,
+                tg_topic_id=catalog.tg_topic_id,
+                url=catalog.url,
+                products=success_send
+            )
         except Exception as e:
-            logger.error(f"Error send messages to TG: {e}")
+            logger.error(f"Error send messages: {e}")
+        else:
+            return catalog_with_products

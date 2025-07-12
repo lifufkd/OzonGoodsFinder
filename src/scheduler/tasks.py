@@ -7,9 +7,8 @@ from src.core.logger import setup_logger
 from src.core.proxy_manager import ProxyManager
 from src.core.redis_client import redis_client
 from src.scheduler.task_queue import broker
-from src.services.ozon_parser import OzonParserService
-from src.services.tg_bot import TgBotService
-from src.services.cleanup import CleanupService
+from src.services.goods.ozon.ozon import OzonService
+from src.services.cleanup.cleanup import CleanupService
 
 
 @broker.task
@@ -21,12 +20,9 @@ async def update_products():
     await proxy_manager.init_proxies()
 
     tg_bot_uow = TgBotUow(tg_settings.TG_BOT_TOKEN)
-    tg_bot_service = TgBotService(tg_bot_uow)
-    ozon_parser = OzonParserService(tg_bot_service)
+    ozon = OzonService(tg_bot_uow)
 
-    new_products = await ozon_parser.get_new_products()
-    if new_products:
-        await tg_bot_service.send_products(new_products)
+    await ozon.get_new_products()
 
     logger.info(f"Products updated finished!")
 
@@ -38,7 +34,7 @@ async def clean_old_products():
 
     tg_bot_uow = TgBotUow(tg_settings.TG_BOT_TOKEN)
     cleanup_service = CleanupService(tg_bot_uow)
-    await cleanup_service.cleanup_old_products()
+    await cleanup_service.cleanup()
 
     logger.info(f"Cleanup finished!")
 

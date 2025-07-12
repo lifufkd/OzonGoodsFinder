@@ -9,7 +9,16 @@ class ProductsRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_urls(self) -> list[str]:
+    async def get_by_urls(self, urls: list[str]) -> list[Product]:
+        query = (
+            select(Product)
+            .where(Product.url.in_(urls))
+        )
+        result = await self.session.execute(query)
+
+        return list(result.scalars().all())
+
+    async def get_all(self) -> list[str]:
         query = (
             select(
                 Product.url

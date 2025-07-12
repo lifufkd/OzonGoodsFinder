@@ -5,18 +5,20 @@ from src.core.exceptions import TgPermissionsError, TgChatIdInvalid, TgChatTopic
 from src.schemas.enums import SourceTypes
 from src.schemas.categories import Catalog
 from src.core.config import generic_settings
-from src.services.tg_bot import TgBotService
+from src.uow.tg_bot_uow import TgBotUow
+from src.services.telegram import GenericTelegramService
 
 
-async def get_catalogs(tg_bot_service: TgBotService) -> list[Catalog]:
+async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
     result = []
+    telegram_service = GenericTelegramService(telegram_uow)
 
     try:
         for category in generic_settings.CATEGORIES:
             tg_group_id = category.get('TG_GROUP_ID')
             if not isinstance(tg_group_id, int) or tg_group_id > 0:
                 raise TgChatIdInvalid(detail=f"Tg group id ({tg_group_id}) is invalid")
-            if not await tg_bot_service.verify_tg_permissions(chat_id=tg_group_id):
+            if not await telegram_service.verify_tg_permissions(chat_id=tg_group_id):
                 raise TgPermissionsError(detail=f"Tg bot does not have permission to access Tg group id ({tg_group_id})")
 
             for first_sub_category in category.get("SUB_CATEGORIES"):
