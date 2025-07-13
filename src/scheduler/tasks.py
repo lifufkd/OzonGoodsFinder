@@ -40,4 +40,4 @@ async def clean_old_products():
 
 
 if __name__ == '__main__':
-    asyncio.run(clean_old_products())
+    asyncio.run(update_products())

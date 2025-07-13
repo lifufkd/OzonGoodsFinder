@@ -331,7 +331,8 @@ class OzonParser:
             settings = generic_settings.OZON_PARSER_SETTINGS
 
             await browser_tab.goto(catalog_url + f"&page={page}", timeout=timeout*1000, wait_until="networkidle")
-            await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=timeout*1000)
+            await asyncio.sleep(timeout)
+            await browser_tab.wait_for_selector(settings.get("PRODUCTS_SELECTOR"), timeout=timeout * 1000)
 
             cards = await browser_tab.query_selector_all(settings.get("CARDS_SELECTOR"))
             logger.debug(f"Find {len(cards)} products in category {catalog_url}")
@@ -369,6 +370,7 @@ class OzonParser:
 
         try:
             await browser_tab.goto(product_url, timeout=timeout*1000, wait_until="networkidle")
+            await asyncio.sleep(timeout)
 
             content = await browser_tab.content()
             soup = BeautifulSoup(content, "html.parser")
