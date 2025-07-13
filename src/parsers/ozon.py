@@ -88,7 +88,6 @@ class OzonParser:
                         });
                         """
                     )
-
                     result = await func(*args, browser_tab=browser_tab, **kwargs)
                     if extracted_proxy:
                         await proxy_manager.return_proxy(selected_proxy)
@@ -99,7 +98,7 @@ class OzonParser:
                         await proxy_manager.remove_proxy(selected_proxy)
                         extracted_proxy = True
 
-                    backoff = generic_settings.OZON_PARSER_SETTINGS.get("TIMEOUT") * (2 ** attempt)
+                    backoff = generic_settings.OZON_PARSER_SETTINGS.get("PROXY_TIMEOUT") * (2 ** attempt)
                     logger.warning(f"Proxy {selected_proxy} has been temporarily banned, retry after {backoff} seconds")
                     await asyncio.sleep(backoff)
                 finally:
