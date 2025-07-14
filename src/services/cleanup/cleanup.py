@@ -75,5 +75,6 @@ class CleanupService:
 
             await self.delete_outdated_messages(outdated_messages)
 
+            logger.info(f"Successfully cleaned up {len(outdated_messages)} outdated messages")
         except Exception as e:
             logger.error(f"Error cleanup: {e}")

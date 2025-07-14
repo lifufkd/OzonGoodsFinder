@@ -48,7 +48,7 @@ class OzonParserService:
 
                 products_urls.extend(temp_products_urls)
 
-            products = [Product(url=product_url) for product_url in products_urls[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]]
+            products = [Product(url=product_url) for product_url in products_urls]
             catalog_with_products = CatalogWithProducts(
                 products=products,
                 **catalog.model_dump()

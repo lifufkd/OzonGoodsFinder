@@ -9,10 +9,10 @@ class ProductsRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_urls(self, urls: list[str]) -> list[Product]:
+    async def get_by_titles(self, titles: list[str]) -> list[Product]:
         query = (
             select(Product)
-            .where(Product.url.in_(urls))
+            .where(Product.title.in_(titles))
         )
         result = await self.session.execute(query)
 

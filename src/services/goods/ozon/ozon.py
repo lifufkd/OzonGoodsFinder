@@ -86,6 +86,26 @@ class OzonService:
 
         return catalog_with_db_products
 
+    async def clean_duplicate_products_by_title(self, products: list[FullProduct]) -> list[FullProduct]:
+        result = []
+
+        async for session in get_session():
+            try:
+                products_repository = ProductsRepository(session)
+
+                titles = [product.title for product in products]
+                duplicates = await products_repository.get_by_titles(titles)
+
+                for product in products:
+                    if product.title in duplicates:
+                        continue
+
+                    result.append(product)
+            except Exception as e:
+                logger.error(f"Error clean duplicate products: {e}")
+
+        return result
+
     async def get_products_links(
             self,
             catalogs: list[Catalog],
@@ -112,13 +132,17 @@ class OzonService:
         async def parse_full_products():
             data = []
             async for product_chunk in chunk_generator(catalog.products, max_threads):
+                if len(data) >= generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
+                    break
+
                 _tasks = [asyncio.create_task(self.parser_service.get_product(product, timeout)) for product in product_chunk]
                 _full_products = await asyncio.gather(*_tasks)
                 _full_products = list(filter(None, _full_products))
+                _cleaned_full_products = await self.clean_duplicate_products_by_title(_full_products)
 
-                data.extend(_full_products)
+                data.extend(_cleaned_full_products)
 
-            return data
+            return data[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]
 
         for index, catalog in enumerate(catalogs_with_products):
             db_products = None
