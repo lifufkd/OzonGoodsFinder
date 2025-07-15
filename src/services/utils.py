@@ -80,7 +80,7 @@ async def assign_catalogs_for_products(catalogs: list[CatalogWithProducts], prod
                 results.append(
                     CatalogWithFullProducts(
                         products=[product],
-                        **matched_catalog.model_dump()
+                        **matched_catalog.model_dump(exclude={"products"})
                     )
                 )
             count += 1
