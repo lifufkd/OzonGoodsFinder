@@ -134,29 +134,23 @@ class OzonService:
 
         catalog_full_product = None
 
-        async def parse_catalogs_with_products() -> list[CatalogWithFullProducts]:
-            count = 0
+        async def parse_catalogs_with_products():
             data = []
 
             async for product_chunk in chunk_generator(catalog.products, max_threads):
-                if count >= generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
+                if len(data) >= generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
                     break
 
                 _tasks = [asyncio.create_task(self.parser_service.get_product(product, timeout)) for product in product_chunk]
                 _full_products = await asyncio.gather(*_tasks)
                 _full_products = list(filter(None, _full_products))
                 _full_products = await self.clean_duplicate_products_by_title(_full_products)
-                _catalogs_with_products = await assign_catalogs_for_products(
-                    catalogs=catalogs_with_products,
-                    products=_full_products
-                )
-                count += _catalogs_with_products.get("count")
 
-                data.extend(_catalogs_with_products.get("results"))
+                data.extend(_full_products)
 
             return data
 
-        for index, catalog in enumerate(catalogs_with_products):
+        for catalog in catalogs_with_products:
             db_products = None
 
             if isinstance(catalog_full_product, list) and catalog_full_product:
@@ -165,7 +159,10 @@ class OzonService:
 
             tasks = [asyncio.create_task(parse_catalogs_with_products()), asyncio.create_task(self.telegram_service.send(db_products))]
             results = await asyncio.gather(*tasks)
-            catalog_full_product = results[0]
+            catalog_full_product = await assign_catalogs_for_products(
+                catalogs=catalogs_with_products,
+                products=results[0]
+            )  # Assign by hashtag
             tg_products = results[1]
             if tg_products:
                 await self.insert_tg_messages(tg_products)
