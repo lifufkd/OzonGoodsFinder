@@ -17,7 +17,10 @@ class Product(Base):
         nullable=False
     )
     title: Mapped[str] = mapped_column(nullable=False)
-    hashtag: Mapped[str] = mapped_column(nullable=False)
+    hashtag: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False
+    )
     rating: Mapped[float] = mapped_column(nullable=True)
     reviews: Mapped[int] = mapped_column(nullable=True)
     discount: Mapped[int] = mapped_column(nullable=False)
