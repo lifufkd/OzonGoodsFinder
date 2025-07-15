@@ -7,7 +7,7 @@ from telebot.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardB
 from src.schemas.products import DBProduct, TgProduct
 from src.schemas.categories import CatalogWithDBProducts, CatalogWithTgProducts
 from src.core.config import generic_settings
-from src.core.utils import chunk_generator
+from src.core.utils import chunk_generator, remove_all_whitespace
 from src.uow.tg_bot_uow import TgBotUow
 
 
@@ -20,7 +20,7 @@ class OzonTelegramService:
             return "\n".join(f"<b>{key}:</b> {value}" for key, value in characteristics.items())
 
         msg = ""
-        msg += f"#{product.hashtag}\n\n"
+        msg += f"#{remove_all_whitespace(''.join(product.hashtag[-2:]))}\n\n"
         msg += f"<b>{product.title}</b>\n\n"
         msg += f"<b>Скидка:</b> -{product.discount}%\n"
         msg += f"<b>Рейтинг продавца:</b> {product.rating} ⭐\n" if product.rating else ""
