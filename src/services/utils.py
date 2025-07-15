@@ -47,8 +47,7 @@ async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
     return result
 
 
-async def assign_catalogs_for_products(catalogs: list[CatalogWithProducts], products: list[FullProduct]) -> dict:
-    count = 0
+async def assign_catalogs_for_products(catalogs: list[CatalogWithProducts], products: list[FullProduct]) -> list[CatalogWithFullProducts]:
     results: list[CatalogWithFullProducts] = []
 
     try:
@@ -83,12 +82,8 @@ async def assign_catalogs_for_products(catalogs: list[CatalogWithProducts], prod
                         **matched_catalog.model_dump(exclude={"products"})
                     )
                 )
-            count += 1
     except Exception as e:
         logger.warning(f"Error assign catalogs for products: {e}")
     finally:
-        return {
-            "count": count,
-            "results": results
-        }
+        return results
 
