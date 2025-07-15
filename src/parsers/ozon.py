@@ -122,7 +122,7 @@ class OzonParser:
             parts[-2] = 'wc1000'
         return '/'.join(parts)
 
-    def _find_hashtag(self, soup: BeautifulSoup) -> str | None:
+    def _find_hashtag(self, soup: BeautifulSoup) -> list[str] | None:
         hashtag = None
         try:
             div = soup.find("div", id=re.compile(r"^state-breadCrumbs-"))
@@ -137,9 +137,7 @@ class OzonParser:
             data = json.loads(data_state)
             breadcrumbs = data.get("breadcrumbs")
 
-            raw_pre_last_hashtag = breadcrumbs[-2]["text"]
-            raw_last_hashtag = breadcrumbs[-1]["text"]
-            hashtag = f"{remove_all_whitespace(raw_pre_last_hashtag)}_{remove_all_whitespace(raw_last_hashtag)}"
+            hashtag = [breadcrumb["text"] for breadcrumb in breadcrumbs]
         except Exception as e:
             logger.warning(f"Cannot find hashtag: {e}")
         finally:

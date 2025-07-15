@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class Catalog(BaseModel):
     tg_group_id: int
     tg_topic_id: int
+    tag: str
     url: str
 
 

@@ -8,7 +8,7 @@ from src.services.goods.ozon.parser import OzonParserService
 from src.repositories.products import ProductsRepository
 from src.repositories.tg_messages import TgMessagesRepository
 from src.uow.tg_bot_uow import TgBotUow
-from src.services.utils import get_catalogs
+from src.services.utils import get_catalogs, assign_catalogs_for_products
 from src.schemas.tg_messages import AddTgMessage
 from src.schemas.products import FullProduct, DBProduct
 from src.schemas.categories import (
@@ -31,18 +31,20 @@ class OzonService:
         self.browser = None
         self.parser_service = None
 
-    async def insert_tg_messages(self, catalog: CatalogWithTgProducts) -> None:
+    async def insert_tg_messages(self, catalogs: list[CatalogWithTgProducts]) -> None:
         async for session in get_session():
             try:
                 tg_messages_repository = TgMessagesRepository(session)
-                for product in catalog.products:
-                    tg_message = AddTgMessage(
-                        product_id=product.id,
-                        tg_message_id=product.tg_message_id,
-                        tg_group_id=catalog.tg_group_id,
-                        tg_topic_id=catalog.tg_topic_id
-                    )
-                    await tg_messages_repository.add(tg_message)
+
+                for catalog in catalogs:
+                    for product in catalog.products:
+                        tg_message = AddTgMessage(
+                            product_id=product.id,
+                            tg_message_id=product.tg_message_id,
+                            tg_group_id=catalog.tg_group_id,
+                            tg_topic_id=catalog.tg_topic_id
+                        )
+                        await tg_messages_repository.add(tg_message)
             except Exception as e:
                 logger.critical(f"Error insert tg message to DB: {e}")
                 await session.rollback()
@@ -71,20 +73,23 @@ class OzonService:
 
         return updated_products
 
-    async def insert_catalog(self, catalogs: CatalogWithFullProducts) -> CatalogWithDBProducts:
-        catalog_with_db_products = None
+    async def insert_catalog(self, catalogs: list[CatalogWithFullProducts]) -> list[CatalogWithDBProducts]:
+        catalogs_with_db_products = []
 
         try:
-            updated_products = await self.insert_products(catalogs.products)
-            if updated_products:
-                catalog_with_db_products = CatalogWithDBProducts(
-                    products=updated_products,
-                    **catalogs.model_dump(exclude={"products"})
-                )
+            for catalog in catalogs:
+                updated_products = await self.insert_products(catalog.products)
+                if updated_products:
+                    catalogs_with_db_products.append(
+                        CatalogWithDBProducts(
+                            products=updated_products,
+                            **catalog.model_dump(exclude={"products"})
+                        )
+                    )
         except Exception as e:
             logger.critical(f"Error insert catalog: {e}")
 
-        return catalog_with_db_products
+        return catalogs_with_db_products
 
     async def clean_duplicate_products_by_title(self, products: list[FullProduct]) -> list[FullProduct]:
         result = []
@@ -129,36 +134,36 @@ class OzonService:
 
         catalog_full_product = None
 
-        async def parse_full_products():
+        async def parse_catalogs_with_products() -> list[CatalogWithFullProducts]:
+            count = 0
             data = []
+
             async for product_chunk in chunk_generator(catalog.products, max_threads):
-                if len(data) >= generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
+                if count >= generic_settings.MAX_PRODUCTS_FROM_CATEGORY:
                     break
 
                 _tasks = [asyncio.create_task(self.parser_service.get_product(product, timeout)) for product in product_chunk]
                 _full_products = await asyncio.gather(*_tasks)
                 _full_products = list(filter(None, _full_products))
-                _cleaned_full_products = await self.clean_duplicate_products_by_title(_full_products)
+                _full_products = await self.clean_duplicate_products_by_title(_full_products)
+                _catalogs_with_products = await assign_catalogs_for_products(
+                    catalogs=catalogs_with_products,
+                    products=_full_products
+                )
+                count += _catalogs_with_products.get("count")
 
-                data.extend(_cleaned_full_products)
+                data.extend(_catalogs_with_products.get("results"))
 
-            return data[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]
+            return data
 
         for index, catalog in enumerate(catalogs_with_products):
             db_products = None
 
             if isinstance(catalog_full_product, list) and catalog_full_product:
-                full_products = CatalogWithFullProducts(
-                    tg_group_id=catalogs_with_products[index-1].tg_group_id,
-                    tg_topic_id=catalogs_with_products[index-1].tg_topic_id,
-                    url=catalogs_with_products[index-1].url,
-                    products=catalog_full_product
-                )
-
-                db_products = await self.insert_catalog(full_products)
+                db_products = await self.insert_catalog(catalog_full_product)
                 catalog_full_product.clear()
 
-            tasks = [asyncio.create_task(parse_full_products()), asyncio.create_task(self.telegram_service.send(db_products))]
+            tasks = [asyncio.create_task(parse_catalogs_with_products()), asyncio.create_task(self.telegram_service.send(db_products))]
             results = await asyncio.gather(*tasks)
             catalog_full_product = results[0]
             tg_products = results[1]
@@ -166,14 +171,7 @@ class OzonService:
                 await self.insert_tg_messages(tg_products)
 
         if isinstance(catalog_full_product, list) and catalog_full_product:
-            full_products = CatalogWithFullProducts(
-                tg_group_id=catalogs_with_products[-1].tg_group_id,
-                tg_topic_id=catalogs_with_products[-1].tg_topic_id,
-                url=catalogs_with_products[-1].url,
-                products=catalog_full_product
-            )
-
-            db_products = await self.insert_catalog(full_products)
+            db_products = await self.insert_catalog(catalog_full_product)
             tg_products = await self.telegram_service.send(db_products)
             if tg_products:
                 await self.insert_tg_messages(tg_products)

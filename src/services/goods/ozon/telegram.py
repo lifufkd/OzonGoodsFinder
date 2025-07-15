@@ -116,35 +116,37 @@ class OzonTelegramService:
         )
         return tg_product
 
-    async def send(self, catalog: CatalogWithDBProducts) -> CatalogWithTgProducts | None:
-        if catalog is None:
+    async def send(self, catalogs: list[CatalogWithDBProducts] | None) -> list[CatalogWithTgProducts] | None:
+        results = []
+        if catalogs is None:
             return None
 
         try:
             settings = generic_settings.TG_BOT_SETTINGS
 
             async with self.tg_bot_uow as tg_bot:
-                success_send = []
-                async for products_chunk in chunk_generator(catalog.products,
-                                                            settings.get("MAX_CONCURRENT_SENDING_TASKS")):
-                    tasks = [asyncio.create_task(
-                        self._send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for
-                             product in products_chunk]
-                    send_products = await asyncio.gather(*tasks)
+                for catalog in catalogs:
+                    success_send = []
+                    async for products_chunk in chunk_generator(catalog.products,
+                                                                settings.get("MAX_CONCURRENT_SENDING_TASKS")):
+                        tasks = [asyncio.create_task(
+                            self._send_message(catalog.tg_group_id, catalog.tg_topic_id, product, tg_bot.bot)) for
+                                 product in products_chunk]
+                        send_products = await asyncio.gather(*tasks)
 
-                    for send_product in send_products:
-                        if not send_product:
-                            continue
+                        for send_product in send_products:
+                            if not send_product:
+                                continue
 
-                        success_send.append(send_product)
+                            success_send.append(send_product)
 
-            catalog_with_products = CatalogWithTgProducts(
-                tg_group_id=catalog.tg_group_id,
-                tg_topic_id=catalog.tg_topic_id,
-                url=catalog.url,
-                products=success_send
-            )
+                    results.append(
+                        CatalogWithTgProducts(
+                            products=success_send,
+                            **catalog.model_dump(exclude={"products"})
+                        )
+                    )
         except Exception as e:
             logger.error(f"Error send messages: {e}")
         else:
-            return catalog_with_products
+            return results

@@ -3,10 +3,12 @@ import sys
 
 from src.core.exceptions import TgPermissionsError, TgChatIdInvalid, TgChatTopicIdInvalid
 from src.schemas.enums import SourceTypes
-from src.schemas.categories import Catalog
+from src.schemas.categories import Catalog, CatalogWithFullProducts, CatalogWithProducts
+from src.schemas.products import FullProduct
 from src.core.config import generic_settings
 from src.uow.tg_bot_uow import TgBotUow
 from src.services.telegram import GenericTelegramService
+from src.core.utils import remove_all_whitespace
 
 
 async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
@@ -34,6 +36,7 @@ async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
                         Catalog(
                             tg_group_id=tg_group_id,
                             tg_topic_id=tg_topic_id,
+                            tag=second_sub_category.get("TAG"),
                             url=second_sub_category.get("URL")
                         )
                     )
@@ -42,3 +45,50 @@ async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
         sys.exit(1)
 
     return result
+
+
+async def assign_catalogs_for_products(catalogs: list[CatalogWithProducts], products: list[FullProduct]) -> dict:
+    count = 0
+    results: list[CatalogWithFullProducts] = []
+
+    try:
+        for product in products:
+            result_index = None
+            matched_catalog = None
+            matched_length = 0
+            product_tag = remove_all_whitespace("".join(product.hashtag).lower())
+
+            for catalog in catalogs:
+                catalog_tag = remove_all_whitespace(catalog.tag.lower())
+                if catalog_tag in product_tag and len(catalog_tag) > matched_length:
+                    matched_catalog = catalog
+                    matched_length = len(catalog_tag)
+
+            if not matched_catalog:
+                continue
+
+            for index, result in enumerate(results):
+                if result.tg_group_id != matched_catalog.tg_group_id:
+                    continue
+
+                result_index = index
+                break
+
+            if result_index:
+                results[result_index].products.append(product)
+            else:
+                results.append(
+                    CatalogWithFullProducts(
+                        products=[product],
+                        **matched_catalog.model_dump()
+                    )
+                )
+            count += 1
+    except Exception as e:
+        logger.warning(f"Error assign catalogs for products: {e}")
+    finally:
+        return {
+            "count": count,
+            "results": results
+        }
+
