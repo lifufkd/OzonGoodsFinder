@@ -148,7 +148,7 @@ class OzonService:
 
                 data.extend(_full_products)
 
-            return data
+            return data[:generic_settings.MAX_PRODUCTS_FROM_CATEGORY]
 
         for catalog in catalogs_with_products:
             db_products = None
