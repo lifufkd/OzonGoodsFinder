@@ -36,7 +36,7 @@ async def get_catalogs(telegram_uow: TgBotUow) -> list[Catalog]:
                         Catalog(
                             tg_group_id=tg_group_id,
                             tg_topic_id=tg_topic_id,
-                            tag=second_sub_category.get("TAG"),
+                            tag=first_sub_category.get("TAG"),
                             url=second_sub_category.get("URL")
                         )
                     )
