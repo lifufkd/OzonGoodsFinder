@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from src.schemas.enums import SourceTypes
@@ -11,7 +11,7 @@ class Product(BaseModel):
 class FullProduct(Product):
     source_type: SourceTypes
     title: str
-    hashtag: list[str]
+    hashtag: list[str] = Field(min_length=4)
     rating: Optional[float] = None
     reviews: Optional[int] = None
     discount: int
