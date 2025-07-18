@@ -72,7 +72,7 @@ def clean_url(url: str) -> str:
 
 
 def text_escape(text: str) -> str:
-    return re.sub(r'\W+', '', text)
+    return re.sub(r'[^\w_]+', '', text)
 
 
 def remove_all_whitespace(text: str) -> str:
@@ -84,3 +84,22 @@ def normalize_hashtag(raw_hashtag: str) -> str:
     hashtag = hashtag.lower()
     hashtag = text_escape(hashtag)
     return hashtag
+
+
+def build_hashtag(raw_hashtag: list[str]) -> str | None:
+    match len(raw_hashtag):
+        case 0 | 1:
+            selected_parts = None
+        case 2:
+            selected_parts = [raw_hashtag[1]]
+        case 3:
+            selected_parts = [raw_hashtag[1], raw_hashtag[-1]]
+        case _:
+            selected_parts = [raw_hashtag[1]] + raw_hashtag[-2:]
+
+    if not selected_parts:
+        return None
+
+    hashtag = '_'.join(selected_parts)
+    normalized_hashtag = normalize_hashtag(hashtag)
+    return normalized_hashtag
