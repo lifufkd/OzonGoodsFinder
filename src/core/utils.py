@@ -4,7 +4,6 @@ import re
 from datetime import datetime, time
 from itertools import islice
 from loguru import logger
-from transliterate import translit
 
 from src.core.redis_client import redis_client
 
@@ -83,6 +82,5 @@ def remove_all_whitespace(text: str) -> str:
 def normalize_hashtag(raw_hashtag: str) -> str:
     hashtag = remove_all_whitespace(raw_hashtag)
     hashtag = hashtag.lower()
-    hashtag = translit(hashtag, 'ru', reversed=True)
     hashtag = text_escape(hashtag)
     return hashtag
