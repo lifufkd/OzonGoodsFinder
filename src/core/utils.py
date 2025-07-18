@@ -72,6 +72,10 @@ def clean_url(url: str) -> str:
     return str(urlunparse(cleaned))
 
 
+def text_escape(text: str) -> str:
+    return re.sub(r'\W+', '', text)
+
+
 def remove_all_whitespace(text: str) -> str:
     return re.sub(r'\s+', '', text)
 
@@ -80,4 +84,5 @@ def normalize_hashtag(raw_hashtag: str) -> str:
     hashtag = remove_all_whitespace(raw_hashtag)
     hashtag = hashtag.lower()
     hashtag = translit(hashtag, 'ru', reversed=True)
+    hashtag = text_escape(hashtag)
     return hashtag
