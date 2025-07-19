@@ -11,7 +11,7 @@ class Product(BaseModel):
 class FullProduct(Product):
     source_type: SourceTypes
     title: str
-    hashtag: list[str] = Field(min_length=4)
+    hashtag: list[str] = Field(min_length=2)
     rating: Optional[float] = None
     reviews: Optional[int] = None
     discount: int
